@@ -32,6 +32,14 @@ describe('real official connection + protected loopback gateway', () => {
     const r = await http('/api/llm/listProviders', { method: 'POST', headers: { origin: `https://${deployment.hostname}`, 'content-type': 'application/json' }, data: { type: 'client-request', rpcId: 'test-1', method: 'llm/listProviders', payload: {} } });
     expect(r.status).toBe(200); expect(r.text).toContain('fixture-provider');
   });
+  test('expired browser navigation offers explicit login recovery without redirect loops', async () => {
+    const r = await http('/', { headers: { 'cf-access-jwt-assertion': 'bad', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' } });
+    expect(r.status).toBe(403); expect(r.headers.location).toBeUndefined();
+    expect(r.headers['content-type']).toContain('text/html'); expect(r.text).toContain('/cdn-cgi/access/logout');
+    expect(r.text).toContain('请重新登录'); expect(r.text).not.toContain('http-equiv="refresh"');
+    const rpc = await http('/api/llm/listProviders', { method: 'POST', headers: { 'cf-access-jwt-assertion': 'bad', 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty' } });
+    expect(rpc.status).toBe(403); expect(rpc.headers['content-type']).toContain('application/json');
+  });
   test('preserves POST payload, rewrites authority, strips CF secrets', async () => {
     const r = await http('/api/echo', { method: 'POST', headers: { origin: `https://${deployment.hostname}`, 'content-type': 'application/json' }, data: { message: 'hello' } });
     expect(r.status).toBe(200); expect(JSON.parse(r.text)).toMatchObject({ body: { message: 'hello' }, cookie: true, cf: null, origin: `http://127.0.0.1:${native.port}` });

@@ -463,7 +463,10 @@ var Gateway = class {
     try {
       id = await this.identity(req);
     } catch {
-      json(res, 403, { error: "\u9700\u8981\u6709\u6548\u7684 Cloudflare Access \u8BA4\u8BC1\u3002" });
+      if (req.method === "GET" && req.headers["sec-fetch-mode"] === "navigate" && req.headers["sec-fetch-dest"] === "document") {
+        res.writeHead(403, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'" });
+        res.end('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>\u8BF7\u91CD\u65B0\u767B\u5F55</title><style>body{font:16px/1.7 system-ui,sans-serif;max-width:440px;margin:15vh auto;padding:24px;color:#27272a}h1{font-size:24px}a{display:inline-block;color:#fff;background:#27272a;border-radius:6px;padding:8px 18px;text-decoration:none}</style><h1>\u8BF7\u91CD\u65B0\u767B\u5F55</h1><p>\u5F53\u524D\u8BA4\u8BC1\u65E0\u6548\u6216\u5DF2\u8FC7\u671F\u3002\u9000\u51FA\u540E\uFF0C\u91CD\u65B0\u6253\u5F00\u6B64\u5730\u5740\u767B\u5F55\u3002</p><a href="/cdn-cgi/access/logout">\u9000\u51FA\u5F53\u524D\u767B\u5F55</a></html>');
+      } else json(res, 403, { error: "\u9700\u8981\u6709\u6548\u7684 Cloudflare Access \u8BA4\u8BC1\u3002" });
       return;
     }
     const path = this.path(req);
@@ -575,6 +578,9 @@ var Provisioner = class {
   get marker() {
     return `dsh-cloudflare-access-${this.store.state.installationId}`;
   }
+  ownsApp(app) {
+    return app.name === this.marker || Array.isArray(app.tags) && app.tags.includes(this.marker);
+  }
   async discover(api) {
     const zones = await api.list("/zones");
     return zones.map((z2) => ({ id: z2.id, name: z2.name, accountId: z2.account.id, accountName: z2.account.name }));
@@ -596,11 +602,11 @@ var Provisioner = class {
       api.list(`${a}/cfd_tunnel?is_deleted=false&name=${encodeURIComponent(this.marker)}`)
     ]);
     if (zone.account.id !== setup.accountId || !setup.hostname.endsWith(`.${zone.name}`)) fail("ZONE", "\u5FC5\u987B\u9009\u62E9\u8BE5\u8D26\u53F7\u4E0B\u7684\u5B50\u57DF\u540D\uFF0C\u4E0D\u80FD\u8986\u76D6\u6839\u57DF\u540D\u3002");
-    for (const app of apps) if (applicationMatches(app, setup.hostname) && (app.name !== this.marker || app.domain !== setup.hostname || app.type !== "self_hosted")) fail("APP_CONFLICT", "\u8BE5\u57DF\u540D\u5DF2\u6709 Access \u5E94\u7528\uFF08\u5305\u62EC\u901A\u914D\u7B26\u6216\u8DEF\u5F84\u5E94\u7528\uFF09\uFF1B\u4E0D\u4F1A\u8986\u76D6\uFF0C\u8BF7\u9009\u62E9\u65B0\u5B50\u57DF\u540D\u3002");
-    if (apps.some((app) => app.name === this.marker && (app.domain !== setup.hostname || app.type !== "self_hosted"))) fail("OWNERSHIP", "\u672C\u63D2\u4EF6\u7684 Access \u5E94\u7528\u5DF2\u88AB\u4FEE\u6539\uFF0C\u8BF7\u5148\u4EBA\u5DE5\u6838\u5BF9\uFF0C\u4E0D\u4F1A\u53E6\u5EFA\u540C\u540D\u8D44\u6E90\u3002");
+    for (const app of apps) if (applicationMatches(app, setup.hostname) && (!this.ownsApp(app) || app.domain !== setup.hostname || app.type !== "self_hosted")) fail("APP_CONFLICT", "\u8BE5\u57DF\u540D\u5DF2\u6709 Access \u5E94\u7528\uFF08\u5305\u62EC\u901A\u914D\u7B26\u6216\u8DEF\u5F84\u5E94\u7528\uFF09\uFF1B\u4E0D\u4F1A\u8986\u76D6\uFF0C\u8BF7\u9009\u62E9\u65B0\u5B50\u57DF\u540D\u3002");
+    if (apps.some((app) => this.ownsApp(app) && (app.domain !== setup.hostname || app.type !== "self_hosted"))) fail("OWNERSHIP", "\u672C\u63D2\u4EF6\u7684 Access \u5E94\u7528\u5DF2\u88AB\u4FEE\u6539\uFF0C\u8BF7\u5148\u4EBA\u5DE5\u6838\u5BF9\uFF0C\u4E0D\u4F1A\u53E6\u5EFA\u540C\u540D\u8D44\u6E90\u3002");
     if (tunnels.some((t) => t.config_src !== "cloudflare")) fail("TUNNEL_MODE", "\u672C\u63D2\u4EF6\u7684 Tunnel \u914D\u7F6E\u6A21\u5F0F\u4E0D\u4E00\u81F4\uFF0C\u62D2\u7EDD\u8986\u76D6\u3002");
     for (const record of dns) if (record.comment !== this.marker || record.type !== "CNAME" || !tunnels.some((t) => record.content === `${t.id}.cfargotunnel.com`)) fail("DNS_CONFLICT", "\u8BE5\u5B50\u57DF\u540D\u5DF2\u6709 DNS \u8BB0\u5F55\uFF1B\u4E0D\u4F1A\u8986\u76D6\uFF0C\u8BF7\u9009\u62E9\u65B0\u5B50\u57DF\u540D\u3002");
-    if (apps.filter((x) => x.name === this.marker).length > 1 || tunnels.length > 1 || dns.length > 1) fail("AMBIGUOUS", "\u53D1\u73B0\u91CD\u590D\u7684\u90E8\u7F72\u8D44\u6E90\uFF0C\u8BF7\u5148\u5728 Cloudflare \u6838\u5BF9\u3002");
+    if (apps.filter((x) => this.ownsApp(x)).length > 1 || tunnels.length > 1 || dns.length > 1) fail("AMBIGUOUS", "\u53D1\u73B0\u91CD\u590D\u7684\u90E8\u7F72\u8D44\u6E90\uFF0C\u8BF7\u5148\u5728 Cloudflare \u6838\u5BF9\u3002");
     const idp = providers.find((x) => setup.identityProvider === "otp" ? x.type === "onetimepin" : x.id === setup.identityProvider);
     if (!idp && setup.identityProvider !== "otp") fail("IDP", "\u6240\u9009\u767B\u5F55\u65B9\u5F0F\u4E0D\u5B58\u5728\u6216\u5DF2\u88AB\u79FB\u9664\u3002");
     if (setup.postureChecks.length) {
@@ -623,9 +629,10 @@ var Provisioner = class {
       const idp = await api.request("POST", `${a}/access/identity_providers`, { name: "One-time PIN", type: "onetimepin", config: {} });
       idpId = idp.id;
     }
-    let app = (await api.list(`${a}/access/apps`)).find((x) => x.name === this.marker && x.domain === d.hostname);
+    let app = (await api.list(`${a}/access/apps`)).find((x) => this.ownsApp(x) && x.domain === d.hostname);
     if (!app) app = await api.request("POST", `${a}/access/apps`, {
-      name: this.marker,
+      name: "DeepSeek Harness",
+      tags: [this.marker],
       type: "self_hosted",
       domain: d.hostname,
       session_duration: "1h",
@@ -692,7 +699,7 @@ var Provisioner = class {
     if (!d || confirmedHostname !== d.hostname) fail("CONFIRM", "\u8BF7\u5B8C\u6574\u8F93\u5165\u5F53\u524D\u57DF\u540D\u786E\u8BA4\u6E05\u7406\u3002");
     if (this.store.state.enabled) fail("RUNNING", "\u8BF7\u5148\u505C\u7528\u8FDC\u7A0B\u5165\u53E3\u3002");
     const a = `/accounts/${d.accountId}`, z2 = `/zones/${d.zoneId}`;
-    const apps = (await api.list(`${a}/access/apps`)).filter((x) => x.name === this.marker);
+    const apps = (await api.list(`${a}/access/apps`)).filter((x) => this.ownsApp(x));
     const tunnels = await api.list(`${a}/cfd_tunnel?is_deleted=false&name=${encodeURIComponent(this.marker)}`);
     const dns = (await api.list(`${z2}/dns_records?name=${encodeURIComponent(d.hostname)}`)).filter((x) => x.comment === this.marker);
     if (apps.length > 1 || tunnels.length > 1 || dns.length > 1) fail("AMBIGUOUS", "\u8D44\u6E90\u91CD\u590D\uFF0C\u8BF7\u5728 Cloudflare \u624B\u52A8\u6838\u5BF9\u540E\u518D\u6E05\u7406\u3002");

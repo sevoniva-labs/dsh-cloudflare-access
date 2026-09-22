@@ -188,7 +188,7 @@ function createClient(require2) {
           R.Fragment,
           null,
           h("h3", null, "\u5220\u9664\u8BBF\u95EE\u914D\u7F6E"),
-          h("p", null, "\u5220\u9664\u672C\u63D2\u4EF6\u521B\u5EFA\u7684 DNS\u3001Tunnel \u548C Access \u5E94\u7528\uFF0C\u5171\u4EAB\u767B\u5F55\u65B9\u5F0F\u4FDD\u7559\u3002\u8BF7\u5148\u505C\u7528\u5E76\u586B\u5199 API Token\u3002"),
+          h("p", null, "\u5220\u9664\u672C\u5B9E\u4F8B\u7BA1\u7406\u7684 DNS\u3001Tunnel \u548C Access \u5E94\u7528\uFF0C\u5171\u4EAB\u767B\u5F55\u65B9\u5F0F\u4FDD\u7559\u3002\u8BF7\u5148\u505C\u7528\u5E76\u586B\u5199 API Token\u3002"),
           button("\u5220\u9664\u914D\u7F6E\u2026", async () => {
             const confirmed = window.prompt(`\u5C06\u5220\u9664 ${d.hostname} \u7684\u8FDC\u7A0B\u8BBF\u95EE\u914D\u7F6E\u3002\u8F93\u5165\u5B8C\u6574\u57DF\u540D\u786E\u8BA4\uFF1A`);
             if (confirmed !== d.hostname) return;

@@ -71,6 +71,19 @@ describe('transactional provisioning with mocked Cloudflare API', () => {
       } } }, { service: 'http_status:404' },
     ] } });
   });
+  test('uses an ownership tag without exposing its UUID in the login application name', async () => {
+    await deploy();
+    expect(fake.apps[0]).toMatchObject({ name: 'DeepSeek Harness', tags: [provision.marker] });
+    fake.apps[0]!.name = 'Harness Team';
+    await deploy(); expect(fake.apps).toHaveLength(1);
+    await provision.cleanup(fake.api, deployment.hostname); expect(fake.apps).toHaveLength(0);
+  });
+  test('recognizes a legacy name marker but never adopts an untagged same-name app', async () => {
+    await deploy(); fake.apps[0]!.name = provision.marker; delete fake.apps[0]!.tags;
+    await deploy(); expect(fake.apps).toHaveLength(1);
+    fake.apps[0]!.name = 'DeepSeek Harness';
+    await expect(deploy()).rejects.toThrow('已有 Access');
+  });
   test('uncertain DNS write is recovered without duplicating it', async () => {
     fake.uncertainDns = true; await expect(deploy()).rejects.toThrow('写入结果可能不确定');
     expect(fake.dns).toHaveLength(1); expect(store.state.phase).toBe('provisioning');

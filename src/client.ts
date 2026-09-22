@@ -78,7 +78,7 @@ export function createClient(require: (name: string) => unknown) {
           button('发布', async () => { await api('provision', { planId: preview.planId, hostname: confirmation }); setPreview(undefined); setNote('已发布，等待隧道连接。'); }, confirmation !== preview.setup.hostname),
         )),
         d && box(h(R.Fragment, null, h('h3', null, '删除访问配置'),
-          h('p', null, '删除本插件创建的 DNS、Tunnel 和 Access 应用，共享登录方式保留。请先停用并填写 API Token。'),
+          h('p', null, '删除本实例管理的 DNS、Tunnel 和 Access 应用，共享登录方式保留。请先停用并填写 API Token。'),
           button('删除配置…', async () => { const confirmed = window.prompt(`将删除 ${d.hostname} 的远程访问配置。输入完整域名确认：`); if (confirmed !== d.hostname) return; await api('cleanup', { token, hostname: confirmed }); setToken(''); setNote('访问配置已删除。'); }, !token || !!status.enabled),
         )),
       ), busy && h('p', { role: 'status' }, '处理中…'),

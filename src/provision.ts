@@ -8,6 +8,11 @@ export interface Preview { setup: Setup; authDomain: string; zoneName: string; i
 export class Provisioner {
   constructor(readonly store: StateStore, readonly vault: Vault, readonly gatewayPort: number) {}
   get marker(): string { return `dsh-cloudflare-access-${this.store.state.installationId}`; }
+  private ownsApp(app: Row): boolean {
+    // Legacy deployments used the name as a marker. Tags keep ownership separate
+    // from the application name shown on the Cloudflare login page.
+    return app.name === this.marker || (Array.isArray(app.tags) && app.tags.includes(this.marker));
+  }
   async discover(api: Cloudflare) {
     const zones = await api.list<Row & { name: string; account: { id: string; name: string } }>('/zones');
     return zones.map(z => ({ id: z.id, name: z.name, accountId: z.account.id, accountName: z.account.name }));
@@ -28,11 +33,11 @@ export class Provisioner {
       api.list(`${a}/cfd_tunnel?is_deleted=false&name=${encodeURIComponent(this.marker)}`),
     ]);
     if (zone.account.id !== setup.accountId || !setup.hostname.endsWith(`.${zone.name}`)) fail('ZONE', '必须选择该账号下的子域名，不能覆盖根域名。');
-    for (const app of apps) if (applicationMatches(app, setup.hostname) && (app.name !== this.marker || app.domain !== setup.hostname || app.type !== 'self_hosted')) fail('APP_CONFLICT', '该域名已有 Access 应用（包括通配符或路径应用）；不会覆盖，请选择新子域名。');
-    if (apps.some(app => app.name === this.marker && (app.domain !== setup.hostname || app.type !== 'self_hosted'))) fail('OWNERSHIP', '本插件的 Access 应用已被修改，请先人工核对，不会另建同名资源。');
+    for (const app of apps) if (applicationMatches(app, setup.hostname) && (!this.ownsApp(app) || app.domain !== setup.hostname || app.type !== 'self_hosted')) fail('APP_CONFLICT', '该域名已有 Access 应用（包括通配符或路径应用）；不会覆盖，请选择新子域名。');
+    if (apps.some(app => this.ownsApp(app) && (app.domain !== setup.hostname || app.type !== 'self_hosted'))) fail('OWNERSHIP', '本插件的 Access 应用已被修改，请先人工核对，不会另建同名资源。');
     if (tunnels.some(t => t.config_src !== 'cloudflare')) fail('TUNNEL_MODE', '本插件的 Tunnel 配置模式不一致，拒绝覆盖。');
     for (const record of dns) if (record.comment !== this.marker || record.type !== 'CNAME' || !tunnels.some(t => record.content === `${t.id}.cfargotunnel.com`)) fail('DNS_CONFLICT', '该子域名已有 DNS 记录；不会覆盖，请选择新子域名。');
-    if (apps.filter(x => x.name === this.marker).length > 1 || tunnels.length > 1 || dns.length > 1) fail('AMBIGUOUS', '发现重复的部署资源，请先在 Cloudflare 核对。');
+    if (apps.filter(x => this.ownsApp(x)).length > 1 || tunnels.length > 1 || dns.length > 1) fail('AMBIGUOUS', '发现重复的部署资源，请先在 Cloudflare 核对。');
     const idp = providers.find(x => setup.identityProvider === 'otp' ? x.type === 'onetimepin' : x.id === setup.identityProvider);
     if (!idp && setup.identityProvider !== 'otp') fail('IDP', '所选登录方式不存在或已被移除。');
     if (setup.postureChecks.length) {
@@ -55,9 +60,9 @@ export class Provisioner {
       const idp = await api.request<Row>('POST', `${a}/access/identity_providers`, { name: 'One-time PIN', type: 'onetimepin', config: {} });
       idpId = idp.id;
     }
-    let app = (await api.list(`${a}/access/apps`)).find(x => x.name === this.marker && x.domain === d.hostname);
+    let app = (await api.list(`${a}/access/apps`)).find(x => this.ownsApp(x) && x.domain === d.hostname);
     if (!app) app = await api.request<Row>('POST', `${a}/access/apps`, {
-      name: this.marker, type: 'self_hosted', domain: d.hostname,
+      name: 'DeepSeek Harness', tags: [this.marker], type: 'self_hosted', domain: d.hostname,
       session_duration: '1h', allowed_idps: [idpId], auto_redirect_to_identity: true,
       http_only_cookie_attribute: true, same_site_cookie_attribute: 'lax', app_launcher_visible: true,
     });
@@ -103,7 +108,7 @@ export class Provisioner {
     if (this.store.state.enabled) fail('RUNNING', '请先停用远程入口。');
     const a = `/accounts/${d.accountId}`, z = `/zones/${d.zoneId}`;
     // First reconcile uncertain writes using this installation's unique marker.
-    const apps = (await api.list(`${a}/access/apps`)).filter(x => x.name === this.marker);
+    const apps = (await api.list(`${a}/access/apps`)).filter(x => this.ownsApp(x));
     const tunnels = await api.list(`${a}/cfd_tunnel?is_deleted=false&name=${encodeURIComponent(this.marker)}`);
     const dns = (await api.list(`${z}/dns_records?name=${encodeURIComponent(d.hostname)}`)).filter(x => x.comment === this.marker);
     if (apps.length > 1 || tunnels.length > 1 || dns.length > 1) fail('AMBIGUOUS', '资源重复，请在 Cloudflare 手动核对后再清理。');

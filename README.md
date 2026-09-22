@@ -3,7 +3,7 @@
 DeepSeek Harness 插件，通过 Cloudflare Access、Tunnel 和 DNS 提供远程访问。
 
 - 包名：`@sevoniva/dsh-cloudflare-access`
-- 版本：`0.1.0-alpha.1`
+- 版本：`0.1.0-alpha.2`
 - 已验证兼容：官方 DSH `0.1.6-alpha.2`、Node.js 22
 - 平台：macOS、Linux；Windows 暂不支持自动安装连接器
 
@@ -80,7 +80,7 @@ Cloudflare 账号需已完成 Zero Trust 初始化，域名需由该账号托管
 ## 停用、删除与更新
 
 - **停用**：关闭本机入口和连接器，保留云端配置。
-- **删除配置**：先停用，重新填写 API Token 并确认域名。仅删除本实例创建的 DNS、Tunnel 和 Access 应用，保留共享登录方式。
+- **删除配置**：先停用，重新填写 API Token 并确认域名。仅删除本实例管理的 DNS、Tunnel 和 Access 应用，保留共享登录方式。
 - **卸载**：完成云端清理后运行下方命令。直接卸载不会自动删除 Cloudflare 资源。
 
 ```sh

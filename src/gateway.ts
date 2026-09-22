@@ -136,7 +136,15 @@ export class Gateway {
   }
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     let id: Identity;
-    try { id = await this.identity(req); } catch { json(res, 403, { error: '需要有效的 Cloudflare Access 认证。' }); return; }
+    try { id = await this.identity(req); } catch {
+      if (req.method === 'GET' && req.headers['sec-fetch-mode'] === 'navigate' && req.headers['sec-fetch-dest'] === 'document') {
+        // A stale Access cookie must not trap the browser on an unexplained JSON error.
+        // Keep 403 and require an explicit login action; never auto-redirect in a loop.
+        res.writeHead(403, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'" });
+        res.end('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>请重新登录</title><style>body{font:16px/1.7 system-ui,sans-serif;max-width:440px;margin:15vh auto;padding:24px;color:#27272a}h1{font-size:24px}a{display:inline-block;color:#fff;background:#27272a;border-radius:6px;padding:8px 18px;text-decoration:none}</style><h1>请重新登录</h1><p>当前认证无效或已过期。退出后，重新打开此地址登录。</p><a href="/cdn-cgi/access/logout">退出当前登录</a></html>');
+      } else json(res, 403, { error: '需要有效的 Cloudflare Access 认证。' });
+      return;
+    }
     const path = this.path(req);
     if (path === `${PREFIX}/session` && req.method === 'GET') { json(res, 200, { remote: true, email: id.email, expires: id.expires, deviceChecks: this.options.deployment.postureChecks.length }); return; }
     if (path === `${PREFIX}/lease` && req.method === 'POST') { this.leases.set(id.fingerprint, Date.now()); json(res, 200, { ok: true }); return; }
