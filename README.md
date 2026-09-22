@@ -14,7 +14,7 @@ dsh plugin --profile web add github:sevoniva-labs/dsh-cloudflare-access
 dsh --profile web --host 127.0.0.1
 ```
 
-私有仓库需要 GitHub 读取权限。离线安装包也可通过 `dsh plugin --profile web add /absolute/path/package.tgz` 安装。
+离线安装包也可通过 `dsh plugin --profile web add /absolute/path/package.tgz` 安装。
 
 在本机打开 Harness 启动链接，进入 **设置 → Cloudflare 零信任接入**：
 
@@ -107,6 +107,6 @@ npm pack
 | `src/controller.ts` | 操作串行化与运行状态 |
 | `src/cloudflared.ts` | 连接器安装与进程管理 |
 
-`dist/` 随源码提交，GitHub 安装不需要本机编译。提交前执行 `npm run check` 并同步构建产物。[验证记录](docs/verification.md)
+`dist/` 随源码提交，GitHub 安装不需要本机编译。提交前执行 `npm run check` 并同步构建产物。测试范围与集成检查见 [测试与验收](docs/verification.md)。
 
 MIT License。非 DeepSeek 或 Cloudflare 官方产品。

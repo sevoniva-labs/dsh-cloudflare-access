@@ -6,3 +6,13 @@ work/
 .DS_Store
 playwright-report/
 test-results/
+backups/
+artifacts/
+.dsh/
+*.log
+*.pem
+*.key
+*.p12
+*.pfx
+browser-state*.json
+credentials*.json
