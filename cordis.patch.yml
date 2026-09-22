@@ -1,0 +1,15 @@
+# Additive only: never disable the official web-runtime/connection/gateway.
+- insert:
+    - id: dsh-cloudflare-access
+      name: '@sevoniva/dsh-cloudflare-access'
+    - id: directory-picker-browse
+      name: '@deepseek-ai/dsh-host-directory-picker-browse'
+      config:
+        maxEntries: 1000
+    - id: ui-directory-picker-browse
+      name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
+# Remote users select folders on the host through the official browser picker.
+# Never open a native Finder dialog on the unattended machine.
+- id: directory-picker
+  name: '@deepseek-ai/dsh-host-directory-picker-auto'
+  disabled: true

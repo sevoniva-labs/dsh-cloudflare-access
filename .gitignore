@@ -1,0 +1,8 @@
+node_modules/
+coverage/
+work/
+*.tgz
+.env*
+.DS_Store
+playwright-report/
+test-results/
