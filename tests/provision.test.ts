@@ -10,7 +10,7 @@ import { deployment } from './fixtures.ts';
 
 class FakeCloudflare {
   apps: Row[] = []; policies: Row[] = []; tunnels: Row[] = []; dns: Row[] = []; idps: Row[] = [{ id: 'otp-id', type: 'onetimepin' }];
-  operations: string[] = []; uncertainDns = false; failAt = ''; tamperReadback = false;
+  operations: string[] = []; uncertainDns = false; failAt = ''; tamperReadback = false; tunnelConfiguration: unknown;
   api = new Cloudflare('management-token-for-tests', (async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input)), path = url.pathname.replace('/client/v4', ''), method = init?.method ?? 'GET';
     this.operations.push(`${method} ${path}`);
@@ -25,7 +25,7 @@ class FakeCloudflare {
     else if (path.endsWith('/policies')) { if (method === 'POST') { result = { id: 'policy-id', ...body }; this.policies.push(result as Row); } else result = this.tamperReadback && this.policies.length ? [{ ...this.policies[0], decision: 'bypass' }] : this.policies; }
     else if (path.endsWith('/access/apps')) { if (method === 'POST') { result = { id: 'app-id', aud: deployment.audience, ...body }; this.apps.push(result as Row); } else result = this.apps; }
     else if (path.endsWith('/cfd_tunnel')) { if (method === 'POST') { result = { id: 'tunnel-id', ...body }; this.tunnels.push(result as Row); } else result = this.tunnels.filter(t => t.name === url.searchParams.get('name')); }
-    else if (path.endsWith('/configurations')) result = body;
+    else if (path.endsWith('/configurations')) { this.tunnelConfiguration = body; result = body; }
     else if (path.endsWith('/token')) result = 'tunnel-runtime-token-never-in-state';
     else if (path.endsWith('/dns_records')) {
       if (method === 'POST') { result = { id: 'dns-id', ...body }; this.dns.push(result as Row); if (this.uncertainDns) { this.uncertainDns = false; throw new Error('simulated timeout after committed write'); } }
@@ -62,6 +62,14 @@ describe('transactional provisioning with mocked Cloudflare API', () => {
   });
   test('repeated provision reconciles own resources, no duplicate app/tunnel/DNS', async () => {
     await deploy(); await deploy(); expect(fake.apps).toHaveLength(1); expect(fake.tunnels).toHaveLength(1); expect(fake.dns).toHaveLength(1); expect(fake.policies).toHaveLength(1);
+  });
+  test('connector independently enforces the exact Access audience', async () => {
+    await deploy();
+    expect(fake.tunnelConfiguration).toEqual({ config: { ingress: [
+      { hostname: deployment.hostname, service: 'http://127.0.0.1:3082', originRequest: { access: {
+        required: true, teamName: deployment.authDomain.replace('.cloudflareaccess.com', ''), audTag: [deployment.audience],
+      } } }, { service: 'http_status:404' },
+    ] } });
   });
   test('uncertain DNS write is recovered without duplicating it', async () => {
     fake.uncertainDns = true; await expect(deploy()).rejects.toThrow('写入结果可能不确定');

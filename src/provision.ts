@@ -80,7 +80,9 @@ export class Provisioner {
     if (!tunnel) tunnel = await api.request<Row>('POST', `${a}/cfd_tunnel`, { name: this.marker, config_src: 'cloudflare' });
     d.tunnelId = tunnel.id; await this.store.save();
     await api.request('PUT', `${a}/cfd_tunnel/${tunnel.id}/configurations`, { config: { ingress: [
-      { hostname: d.hostname, service: `http://127.0.0.1:${d.gatewayPort}` }, { service: 'http_status:404' },
+      { hostname: d.hostname, service: `http://127.0.0.1:${d.gatewayPort}`, originRequest: { access: {
+        required: true, teamName: d.authDomain.replace('.cloudflareaccess.com', ''), audTag: [d.audience],
+      } } }, { service: 'http_status:404' },
     ] } });
     const token = await api.request<string>('GET', `${a}/cfd_tunnel/${tunnel.id}/token`);
     if (typeof token !== 'string' || token.length < 20) fail('TUNNEL_TOKEN', '没有取得有效的 Tunnel 运行凭据。');

@@ -660,7 +660,11 @@ var Provisioner = class {
     d.tunnelId = tunnel.id;
     await this.store.save();
     await api.request("PUT", `${a}/cfd_tunnel/${tunnel.id}/configurations`, { config: { ingress: [
-      { hostname: d.hostname, service: `http://127.0.0.1:${d.gatewayPort}` },
+      { hostname: d.hostname, service: `http://127.0.0.1:${d.gatewayPort}`, originRequest: { access: {
+        required: true,
+        teamName: d.authDomain.replace(".cloudflareaccess.com", ""),
+        audTag: [d.audience]
+      } } },
       { service: "http_status:404" }
     ] } });
     const token = await api.request("GET", `${a}/cfd_tunnel/${tunnel.id}/token`);
