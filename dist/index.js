@@ -579,7 +579,7 @@ var Provisioner = class {
     return `dsh-cloudflare-access-${this.store.state.installationId}`;
   }
   ownsApp(app) {
-    return app.name === this.marker || Array.isArray(app.tags) && app.tags.includes(this.marker);
+    return app.name === this.marker || app.id === this.store.state.deployment?.appId;
   }
   async discover(api) {
     const zones = await api.list("/zones");
@@ -631,8 +631,7 @@ var Provisioner = class {
     }
     let app = (await api.list(`${a}/access/apps`)).find((x) => this.ownsApp(x) && x.domain === d.hostname);
     if (!app) app = await api.request("POST", `${a}/access/apps`, {
-      name: "DeepSeek Harness",
-      tags: [this.marker],
+      name: this.marker,
       type: "self_hosted",
       domain: d.hostname,
       session_duration: "1h",
@@ -646,6 +645,19 @@ var Provisioner = class {
     d.appId = app.id;
     d.audience = app.aud;
     await this.store.save();
+    if (app.name === this.marker) {
+      await api.request("PUT", `${a}/access/apps/${app.id}`, {
+        name: "DeepSeek Harness",
+        type: "self_hosted",
+        domain: d.hostname,
+        session_duration: "1h",
+        allowed_idps: [idpId],
+        auto_redirect_to_identity: true,
+        http_only_cookie_attribute: true,
+        same_site_cookie_attribute: "lax",
+        app_launcher_visible: true
+      });
+    }
     const expected = {
       name: this.marker,
       decision: "allow",

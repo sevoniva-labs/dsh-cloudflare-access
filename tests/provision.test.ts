@@ -24,6 +24,7 @@ class FakeCloudflare {
     else if (path.endsWith('/identity_providers')) { if (method === 'POST') { result = { id: 'new-otp', ...body }; this.idps.push(result as Row); } else result = this.idps; }
     else if (path.endsWith('/policies')) { if (method === 'POST') { result = { id: 'policy-id', ...body }; this.policies.push(result as Row); } else result = this.tamperReadback && this.policies.length ? [{ ...this.policies[0], decision: 'bypass' }] : this.policies; }
     else if (path.endsWith('/access/apps')) { if (method === 'POST') { result = { id: 'app-id', aud: deployment.audience, ...body }; this.apps.push(result as Row); } else result = this.apps; }
+    else if (path.endsWith('/access/apps/app-id') && method === 'PUT') { Object.assign(this.apps[0]!, body); result = this.apps[0]; }
     else if (path.endsWith('/cfd_tunnel')) { if (method === 'POST') { result = { id: 'tunnel-id', ...body }; this.tunnels.push(result as Row); } else result = this.tunnels.filter(t => t.name === url.searchParams.get('name')); }
     else if (path.endsWith('/configurations')) { this.tunnelConfiguration = body; result = body; }
     else if (path.endsWith('/token')) result = 'tunnel-runtime-token-never-in-state';
@@ -53,7 +54,7 @@ describe('transactional provisioning with mocked Cloudflare API', () => {
     const preview = await provision.preview(fake.api, setup()); expect(fake.operations.every(x => x.startsWith('GET'))).toBe(true);
     await provision.provision(fake.api, preview);
     const writes = fake.operations.filter(x => !x.startsWith('GET'));
-    expect(writes.map(x => x.split('/').at(-1))).toEqual(['apps', 'policies', 'cfd_tunnel', 'configurations', 'dns_records']);
+    expect(writes.map(x => x.split('/').at(-1))).toEqual(['apps', 'app-id', 'policies', 'cfd_tunnel', 'configurations', 'dns_records']);
     const tunnelIndex = fake.operations.findIndex(x => x.startsWith('POST') && x.endsWith('cfd_tunnel'));
     expect(fake.operations.slice(0, tunnelIndex).filter(x => x.startsWith('GET') && x.endsWith('policies'))).toHaveLength(2);
     expect(store.state.phase).toBe('configured'); expect(secret).toContain('tunnel-runtime-token');
@@ -71,18 +72,26 @@ describe('transactional provisioning with mocked Cloudflare API', () => {
       } } }, { service: 'http_status:404' },
     ] } });
   });
-  test('uses an ownership tag without exposing its UUID in the login application name', async () => {
+  test('records ownership by ID without exposing its UUID in the login application name', async () => {
     await deploy();
-    expect(fake.apps[0]).toMatchObject({ name: 'DeepSeek Harness', tags: [provision.marker] });
+    expect(fake.apps[0]).toMatchObject({ name: 'DeepSeek Harness', id: store.state.deployment!.appId });
     fake.apps[0]!.name = 'Harness Team';
     await deploy(); expect(fake.apps).toHaveLength(1);
     await provision.cleanup(fake.api, deployment.hostname); expect(fake.apps).toHaveLength(0);
   });
-  test('recognizes a legacy name marker but never adopts an untagged same-name app', async () => {
-    await deploy(); fake.apps[0]!.name = provision.marker; delete fake.apps[0]!.tags;
+  test('recognizes a legacy name marker but never adopts an unrecorded same-name app', async () => {
+    await deploy(); fake.apps[0]!.name = provision.marker;
     await deploy(); expect(fake.apps).toHaveLength(1);
     fake.apps[0]!.name = 'DeepSeek Harness';
+    delete store.state.deployment!.appId;
     await expect(deploy()).rejects.toThrow('已有 Access');
+  });
+  test('persists the app ID before renaming and recovers a failed rename', async () => {
+    fake.failAt = `PUT /accounts/${deployment.accountId}/access/apps/app-id`;
+    await expect(deploy()).rejects.toThrow('HTTP 403');
+    const saved = JSON.parse(await readFile(join(directory, 'state.json'), 'utf8'));
+    expect(saved.deployment.appId).toBe('app-id'); expect(fake.apps[0]!.name).toBe(provision.marker);
+    fake.failAt = ''; await deploy(); expect(fake.apps).toHaveLength(1); expect(fake.apps[0]!.name).toBe('DeepSeek Harness');
   });
   test('uncertain DNS write is recovered without duplicating it', async () => {
     fake.uncertainDns = true; await expect(deploy()).rejects.toThrow('写入结果可能不确定');

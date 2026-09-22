@@ -3,7 +3,7 @@
 DeepSeek Harness 插件，通过 Cloudflare Access、Tunnel 和 DNS 提供远程访问。
 
 - 包名：`@sevoniva/dsh-cloudflare-access`
-- 版本：`0.1.0-alpha.2`
+- 版本：`0.1.0-alpha.3`
 - 已验证兼容：官方 DSH `0.1.6-alpha.2`、Node.js 22
 - 平台：macOS、Linux；Windows 暂不支持自动安装连接器
 

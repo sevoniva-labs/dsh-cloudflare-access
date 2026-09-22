@@ -9,9 +9,9 @@ export class Provisioner {
   constructor(readonly store: StateStore, readonly vault: Vault, readonly gatewayPort: number) {}
   get marker(): string { return `dsh-cloudflare-access-${this.store.state.installationId}`; }
   private ownsApp(app: Row): boolean {
-    // Legacy deployments used the name as a marker. Tags keep ownership separate
-    // from the application name shown on the Cloudflare login page.
-    return app.name === this.marker || (Array.isArray(app.tags) && app.tags.includes(this.marker));
+    // The initial UUID name recovers an uncertain create. Once its ID is saved,
+    // the display name can change without requiring account-wide Access tags.
+    return app.name === this.marker || app.id === this.store.state.deployment?.appId;
   }
   async discover(api: Cloudflare) {
     const zones = await api.list<Row & { name: string; account: { id: string; name: string } }>('/zones');
@@ -62,12 +62,21 @@ export class Provisioner {
     }
     let app = (await api.list(`${a}/access/apps`)).find(x => this.ownsApp(x) && x.domain === d.hostname);
     if (!app) app = await api.request<Row>('POST', `${a}/access/apps`, {
-      name: 'DeepSeek Harness', tags: [this.marker], type: 'self_hosted', domain: d.hostname,
+      name: this.marker, type: 'self_hosted', domain: d.hostname,
       session_duration: '1h', allowed_idps: [idpId], auto_redirect_to_identity: true,
       http_only_cookie_attribute: true, same_site_cookie_attribute: 'lax', app_launcher_visible: true,
     });
     if (typeof app.aud !== 'string' || !app.aud || app.type !== 'self_hosted' || app.domain !== d.hostname) fail('APP_INVALID', 'Access 应用响应缺少有效 audience；发布已停止。');
     d.appId = app.id; d.audience = app.aud; await this.store.save();
+    if (app.name === this.marker) {
+      // Persist the resource ID before changing the temporary recovery marker.
+      // A failed or uncertain rename is safe to retry and never creates a second app.
+      await api.request('PUT', `${a}/access/apps/${app.id}`, {
+        name: 'DeepSeek Harness', type: 'self_hosted', domain: d.hostname,
+        session_duration: '1h', allowed_idps: [idpId], auto_redirect_to_identity: true,
+        http_only_cookie_attribute: true, same_site_cookie_attribute: 'lax', app_launcher_visible: true,
+      });
+    }
     const expected = {
       name: this.marker, decision: 'allow', precedence: 1,
       include: d.emails.map(email => ({ email: { email } })), exclude: [],
