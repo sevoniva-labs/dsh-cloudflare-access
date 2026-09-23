@@ -18,7 +18,9 @@ export class Controller {
   private current?: Promise<unknown>;
   constructor(readonly store: StateStore, readonly vault: Vault, readonly native: NativeSession, gatewayPort: number, cloudflaredPath?: string, private readonly maxTokenAgeSeconds = 7200) {
     this.provisioner = new Provisioner(store, vault, gatewayPort);
-    this.connector = new Connector(store.directory, cloudflaredPath, () => { void this.gateway?.stop(); this.gateway = undefined; });
+    // Keep the authenticated loopback gateway alive while its supervised
+    // connector restarts. JWT/Origin checks remain in force for every request.
+    this.connector = new Connector(store.directory, cloudflaredPath);
   }
   async init(): Promise<void> {
     await this.store.load();
@@ -28,7 +30,7 @@ export class Controller {
   }
   status() {
     const { state } = this.store;
-    return { remote: false, phase: state.phase, enabled: state.enabled, running: !!this.gateway, connector: this.connector.status, busy: this.busy, deployment: state.deployment, lastError: state.lastError };
+    return { remote: false, phase: state.phase, enabled: state.enabled, running: !!this.gateway, connector: this.connector.status, retryAt: this.connector.retryAt, busy: this.busy, deployment: state.deployment, lastError: this.connector.lastError ?? state.lastError };
   }
   async execute(action: string, body: Record<string, unknown>): Promise<unknown> {
     if (this.disposed) fail('DISPOSED', '插件正在停止。', 503);

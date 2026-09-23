@@ -102,6 +102,19 @@ test('changed account requires explicit page recovery and does not reconnect aut
   s.recovery.wake(); await vi.advanceTimersByTimeAsync(90_000); expect(s.probe).toHaveBeenCalledTimes(2);
   expect(s.connection.reconnect).not.toHaveBeenCalled();
 });
+test('account-change guard survives late connection, focus, network and login events', async () => {
+  const s = setup(); s.recovery.start(); await vi.advanceTimersByTimeAsync(0);
+  s.setState('connecting'); s.probe.mockResolvedValue(lease('two', 'different-owner'));
+  await s.recovery.check(); expect(s.render).toHaveBeenLastCalledWith('account-changed');
+  const probes = s.probe.mock.calls.length, renders = s.render.mock.calls.length;
+  s.setState('connected'); s.setState('disconnected'); s.setState('connecting');
+  s.setOnline(false); s.setOnline(true); s.recovery.wake(); s.recovery.login();
+  await s.recovery.check(); await vi.advanceTimersByTimeAsync(120_000);
+  expect(s.render).toHaveBeenCalledTimes(renders);
+  expect(s.render).toHaveBeenLastCalledWith('account-changed');
+  expect(s.probe).toHaveBeenCalledTimes(probes);
+  expect(s.authenticate).not.toHaveBeenCalled(); expect(s.connection.reconnect).not.toHaveBeenCalled();
+});
 test('concurrent focus/pageshow/online events share one probe and one follow-up', async () => {
   const s = setup(); let resolve!: (value: Lease) => void;
   s.probe.mockImplementationOnce(() => new Promise(r => { resolve = r; }));

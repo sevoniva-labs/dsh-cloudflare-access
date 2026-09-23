@@ -8,7 +8,7 @@ import { Gateway, NativeSession } from '../src/gateway.ts';
 import { PREFIX } from '../src/model.ts';
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 
-let token = 'initial', mode = 'valid', commands = 0;
+let token = 'initial', principal = 'fixture-owner', mode = 'valid', commands = 0;
 let browser, gateway, native, edge;
 const listen = async server => { server.listen(0, '127.0.0.1'); await once(server, 'listening'); return server.address().port; };
 const close = server => new Promise(resolve => { if (!server) return resolve(); server.closeAllConnections(); server.close(resolve); });
@@ -17,6 +17,7 @@ const html = `<!doctype html><meta charset="utf-8"><title>Session recovery fixtu
 window.connects=0;window.networkState='connected';const listeners=new Set();let handshake;
 const connection={reconnect(){window.connects++;clearTimeout(handshake);window.networkState='connecting';listeners.forEach(f=>f());handshake=setTimeout(()=>{window.networkState='connected';listeners.forEach(f=>f())},5000)},state:{getSnapshot:()=>window.networkState,subscribe:f=>{listeners.add(f);return()=>listeners.delete(f)}}};
 window.recover=()=>{window.networkState='disconnected';listeners.forEach(f=>f());window.dispatchEvent(new Event('online'))};
+window.reportConnection=state=>{window.networkState=state;listeners.forEach(f=>f())};
 window.disposeRecovery=Recovery.installSessionRecovery(connection);
 document.getElementById('command').onclick=()=>fetch('/fixture-command',{method:'POST'});
 </script>`;
@@ -29,7 +30,7 @@ try {
   const deployment = { hostname: 'harness.example.com', audience: 'fixture', authDomain: 'fixture.cloudflareaccess.com', emails: ['owner@example.com'], postureChecks: [], gatewayPort: 0 };
   gateway = new Gateway({ deployment, native: new NativeSession(nativePort, base => base + '/?fixture-bootstrap'), verify: async assertion => {
     if (assertion !== token) throw new Error('invalid');
-    return { subject: 'fixture-owner', email: 'owner@example.com', expires: Date.now() + 60_000, fingerprint: token };
+    return { subject: principal, email: 'owner@example.com', expires: Date.now() + 60_000, fingerprint: token };
   } });
   await gateway.start();
   const gatewayPort = gateway.server.address().port;
@@ -94,6 +95,13 @@ try {
   mode = 'denied'; await wake(); await page.getByText('当前账号无访问权限。', { exact: true }).waitFor();
   assert.equal(await page.locator('iframe').count(), 0); await assertPreserved();
   console.log('PASS browser: denied access does not create an authentication redirect loop');
+  mode = 'valid'; principal = 'different-fixture-owner'; await wake();
+  const changed = page.getByText('登录账号已更换，请保存草稿后重新打开页面。', { exact: true });
+  await changed.waitFor(); before = await connects();
+  await page.evaluate(() => { window.reportConnection('connected'); window.dispatchEvent(new Event('offline')); window.dispatchEvent(new Event('online')); window.dispatchEvent(new Event('focus')); });
+  await page.waitForTimeout(5500);
+  await changed.waitFor(); assert.equal(await connects(), before); await assertPreserved();
+  console.log('PASS browser: late connection/network events cannot clear the account-change guard');
   assert.deepEqual(errors, []);
 } finally {
   await browser?.close(); await close(edge); await gateway?.stop(); await close(native);

@@ -4,17 +4,28 @@ import { access, chmod, mkdtemp, readFile, rm, unlink } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
-import { createHash } from 'node:crypto';
-import { fail } from './model.ts';
+import { createHash, randomUUID } from 'node:crypto';
+import { fail, publicError } from './model.ts';
 import { privateWrite } from './store.ts';
 const run = promisify(execFile);
 export const CLOUDFLARED_VERSION = '2026.9.1';
 
 export class Connector {
   private child?: ChildProcess;
-  private stopping = false;
-  status: 'stopped' | 'starting' | 'connected' | 'failed' = 'stopped';
-  constructor(readonly directory: string, private readonly configuredPath?: string, private readonly onFailure: () => void = () => {}) {}
+  private stopping = true;
+  private generation = 0;
+  private intent = 0;
+  private token?: string;
+  private pending?: Promise<void>;
+  private stopPending?: Promise<void>;
+  private retryTimer?: NodeJS.Timeout;
+  private stableTimer?: NodeJS.Timeout;
+  private retries = 0;
+  private readonly cleanups = new Set<Promise<void>>();
+  status: 'stopped' | 'starting' | 'connected' | 'retrying' = 'stopped';
+  lastError?: string;
+  retryAt?: number;
+  constructor(readonly directory: string, private readonly configuredPath?: string) {}
   async executable(): Promise<string | undefined> {
     const candidates = this.configuredPath ? [this.configuredPath] : [join(this.directory, 'bin', 'cloudflared'), join(homedir(), '.local/bin/cloudflared'), '/opt/homebrew/bin/cloudflared', '/usr/local/bin/cloudflared', '/usr/bin/cloudflared'];
     for (const file of candidates) {
@@ -27,7 +38,7 @@ export class Connector {
     return undefined;
   }
   async install(): Promise<void> {
-    if (this.child) fail('RUNNING', '请先停用入口，再安装连接器。');
+    if (!this.stopping || this.child || this.pending) fail('RUNNING', '请先停用入口，再安装连接器。');
     const platform = process.platform, arch = process.arch;
     if (!['darwin', 'linux'].includes(platform) || !['arm64', 'x64'].includes(arch)) fail('PLATFORM', '自动安装暂支持 macOS/Linux 的 arm64 和 x64；请手动指定官方 cloudflared 路径。');
     const assetName = `cloudflared-${platform}-${arch === 'x64' ? 'amd64' : arch}${platform === 'darwin' ? '.tgz' : ''}`;
@@ -58,27 +69,100 @@ export class Connector {
     } finally { await rm(temp, { recursive: true, force: true }); }
   }
   async start(token: string): Promise<void> {
-    if (this.child) return;
-    const binary = await this.executable();
-    if (!binary) fail('CONNECTOR_MISSING', '尚未安装官方 cloudflared，请点击安装连接器。');
-    const tokenFile = join(this.directory, 'tunnel-token.runtime'); await privateWrite(tokenFile, token);
-    this.stopping = false; this.status = 'starting';
-    const child = spawn(binary, ['tunnel', '--no-autoupdate', 'run', '--token-file', tokenFile], { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, TUNNEL_LOGLEVEL: 'info' } });
-    this.child = child;
-    // Do not persist/forward raw cloudflared logs: they may contain infrastructure details.
-    let tail = '';
-    child.stderr?.on('data', (data: Buffer) => { tail = (tail + data.toString()).slice(-4096); if (tail.includes('Registered tunnel connection')) this.status = 'connected'; });
-    child.once('exit', () => { this.child = undefined; this.status = this.stopping ? 'stopped' : 'failed'; void unlink(tokenFile).catch(() => {}); if (!this.stopping) this.onFailure(); });
-    await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', () => { this.child = undefined; this.status = 'failed'; void unlink(tokenFile).catch(() => {}); reject(new Error('connector spawn')); }); });
+    const intent = ++this.intent;
+    if (this.stopPending) await this.stopPending;
+    if (intent !== this.intent) return;
+    if (!this.stopping) return this.pending;
+    this.stopping = false; this.token = token; this.retries = 0;
+    await this.launch();
   }
-  async stop(): Promise<void> {
-    this.stopping = true;
-    const child = this.child;
-    if (child) await new Promise<void>(resolve => {
-      const timer = setTimeout(() => child.kill('SIGKILL'), 5000); timer.unref();
-      child.once('exit', () => { clearTimeout(timer); resolve(); }); child.kill('SIGTERM');
+  private active(generation: number): boolean { return !this.stopping && generation === this.generation; }
+  private cleanup(path: string): void {
+    const done = unlink(path).catch(() => {});
+    this.cleanups.add(done); void done.then(() => this.cleanups.delete(done));
+  }
+  private retry(generation: number, message: string): void {
+    if (!this.active(generation) || this.retryTimer) return;
+    clearTimeout(this.stableTimer);
+    const cap = Math.min(60_000, 1000 * 2 ** Math.min(this.retries++, 6));
+    const delay = Math.ceil(cap * (0.8 + Math.random() * 0.2));
+    this.status = 'retrying'; this.lastError = message; this.retryAt = Date.now() + delay;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined; this.retryAt = undefined;
+      if (this.active(generation)) void this.launch();
+    }, delay);
+    this.retryTimer.unref();
+  }
+  private launch(): Promise<void> {
+    if (this.pending) return this.pending;
+    const generation = ++this.generation;
+    const task = this.run(generation).catch(error => this.retry(generation, publicError(error).message)).finally(() => {
+      if (this.pending === task) this.pending = undefined;
     });
-    this.child = undefined; this.status = 'stopped';
-    await unlink(join(this.directory, 'tunnel-token.runtime')).catch(() => {});
+    this.pending = task;
+    return task;
+  }
+  private async run(generation: number): Promise<void> {
+    const binary = await this.executable();
+    if (!this.active(generation)) return;
+    if (!binary) fail('CONNECTOR_MISSING', '尚未安装官方 cloudflared，请先停用入口并安装连接器。');
+    // Each generation owns its credential file. A late exit cannot remove the
+    // replacement process's credentials, even when unlink is delayed.
+    const tokenFile = join(this.directory, `tunnel-token-${randomUUID()}.runtime`);
+    let child: ChildProcess | undefined;
+    try {
+      await privateWrite(tokenFile, this.token!);
+      if (!this.active(generation)) { this.cleanup(tokenFile); return; }
+      this.status = 'starting';
+      child = spawn(binary, ['tunnel', '--no-autoupdate', 'run', '--token-file', tokenFile], { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, TUNNEL_LOGLEVEL: 'info' } });
+      this.child = child;
+      const owned = child;
+      let tail = '', ended = false, spawned = false;
+      const endedOnce = () => {
+        if (ended) return;
+        ended = true; this.cleanup(tokenFile);
+        if (this.child === owned) this.child = undefined;
+        this.retry(generation, '连接器意外退出，正在自动重试。');
+      };
+      // Never persist or expose raw connector logs or credentials.
+      child.stderr?.on('data', (data: Buffer) => {
+        if (!this.active(generation) || ended) return;
+        tail = (tail + data.toString()).slice(-4096);
+        if (this.status !== 'connected' && tail.includes('Registered tunnel connection')) {
+          this.status = 'connected'; this.lastError = undefined;
+          // Do not reset backoff for a process that connects then immediately dies.
+          this.stableTimer = setTimeout(() => { if (this.active(generation)) this.retries = 0; }, 30_000);
+          this.stableTimer.unref();
+        }
+      });
+      child.once('exit', endedOnce);
+      await new Promise<void>(resolve => {
+        owned.once('spawn', () => { spawned = true; resolve(); });
+        owned.on('error', () => {
+          // After spawning, an error does not prove the process is dead. Only
+          // its exit can authorize replacement, preventing duplicate children.
+          if (!spawned) { endedOnce(); resolve(); }
+        });
+      });
+    } catch (error) { if (!child) this.cleanup(tokenFile); throw error; }
+  }
+  stop(): Promise<void> {
+    ++this.intent;
+    if (this.stopPending) return this.stopPending;
+    this.stopping = true; this.token = undefined; ++this.generation;
+    clearTimeout(this.retryTimer); clearTimeout(this.stableTimer);
+    this.retryTimer = undefined; this.retryAt = undefined;
+    const task = (async () => {
+      await this.pending;
+      const child = this.child;
+      if (child && child.exitCode === null && child.signalCode === null) await new Promise<void>(resolve => {
+        const timer = setTimeout(() => child.kill('SIGKILL'), 5000); timer.unref();
+        child.once('exit', () => { clearTimeout(timer); resolve(); }); child.kill('SIGTERM');
+      });
+      this.child = undefined; this.status = 'stopped'; this.lastError = undefined;
+      await Promise.all(this.cleanups);
+    })().finally(() => { if (this.stopPending === task) this.stopPending = undefined; });
+    this.stopPending = task;
+    return task;
   }
 }

@@ -69,6 +69,7 @@ var SessionRecovery = class {
   }
   options;
   stopped = false;
+  accountChanged = false;
   pending;
   queued = false;
   timer;
@@ -85,7 +86,7 @@ var SessionRecovery = class {
   now;
   start() {
     this.unsubscribe = this.options.connection.state.subscribe(() => {
-      if (this.stopped) return;
+      if (this.stopped || this.accountChanged) return;
       if (this.options.connection.state.getSnapshot() === "connected" && this.failedSince === void 0 && this.lease) this.show("connected");
       else if (this.options.connection.state.getSnapshot() !== "connected") this.schedule(1e3);
     });
@@ -99,12 +100,13 @@ var SessionRecovery = class {
     this.unsubscribe?.();
   }
   wake() {
-    if (this.stopped || this.state === "account-changed") return;
+    if (this.stopped || this.accountChanged) return;
     const state = this.options.connection.state.getSnapshot();
     this.needsReconnect ||= state === "disconnected" || state === "connected" && this.lease !== void 0 && this.now() - this.lastSuccess > this.lease.leaseMs / 2;
     void this.check();
   }
   networkChanged() {
+    if (this.stopped || this.accountChanged) return;
     if (this.options.online?.() === false) {
       this.probeAbort?.abort();
       this.authAbort?.abort();
@@ -114,7 +116,7 @@ var SessionRecovery = class {
   }
   /** Must be called directly from a user gesture so a login window is allowed. */
   login() {
-    if (this.stopped || this.state === "account-changed") return;
+    if (this.stopped || this.accountChanged) return;
     this.authAbort?.abort();
     const abort = this.authAbort = new AbortController();
     const result = this.options.authenticate(true, abort.signal);
@@ -129,7 +131,7 @@ var SessionRecovery = class {
     });
   }
   check() {
-    if (this.stopped || this.state === "account-changed") return Promise.resolve();
+    if (this.stopped || this.accountChanged) return Promise.resolve();
     if (this.pending) {
       this.queued = true;
       return this.pending;
@@ -145,13 +147,13 @@ var SessionRecovery = class {
     return this.pending;
   }
   show(state) {
-    if (!this.stopped && this.state !== state) {
+    if (!this.stopped && (!this.accountChanged || state === "account-changed") && this.state !== state) {
       this.state = state;
       this.options.render(state);
     }
   }
   schedule(delay) {
-    if (this.stopped || this.state === "account-changed") return;
+    if (this.stopped || this.accountChanged) return;
     clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       void this.check();
@@ -169,6 +171,12 @@ var SessionRecovery = class {
       const lease = await this.options.probe(abort.signal);
       if (this.stopped) return;
       if (this.lease && lease.principal !== this.lease.principal) {
+        this.accountChanged = true;
+        this.queued = false;
+        this.needsReconnect = false;
+        clearTimeout(this.timer);
+        this.authAbort?.abort();
+        this.authAbort = void 0;
         this.show("account-changed");
         return;
       }
@@ -395,7 +403,7 @@ function createClient(require2) {
           R.Fragment,
           null,
           h("strong", null, status.running ? "\u5DF2\u542F\u7528" : "\u672A\u542F\u7528"),
-          h("p", null, `\u96A7\u9053\uFF1A${{ stopped: "\u672A\u542F\u52A8", starting: "\u8FDE\u63A5\u4E2D", connected: "\u5DF2\u8FDE\u63A5", failed: "\u8FDE\u63A5\u5931\u8D25" }[status.connector ?? "stopped"] ?? "\u672A\u77E5"}`),
+          h("p", null, `\u96A7\u9053\uFF1A${{ stopped: "\u672A\u542F\u52A8", starting: "\u8FDE\u63A5\u4E2D", connected: "\u5DF2\u8FDE\u63A5", retrying: "\u7B49\u5F85\u91CD\u8FDE", failed: "\u8FDE\u63A5\u5931\u8D25" }[status.connector ?? "stopped"] ?? "\u672A\u77E5"}`),
           d && h("p", null, h("a", { href: `https://${d.hostname}`, target: "_blank", rel: "noreferrer" }, d.hostname)),
           d && h("p", null, `\u8BBE\u5907\u9A8C\u8BC1\uFF1A${d.postureChecks.length ? "\u5DF2\u914D\u7F6E" : "\u672A\u914D\u7F6E"}`),
           status.lastError && h("p", null, status.lastError),

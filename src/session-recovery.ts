@@ -40,6 +40,7 @@ export interface RecoveryOptions {
 /** One auth/lease coordinator; the official Connection owns transport retries. */
 export class SessionRecovery {
   private stopped = false;
+  private accountChanged = false;
   private pending?: Promise<void>;
   private queued = false;
   private timer?: ReturnType<typeof setTimeout>;
@@ -58,7 +59,7 @@ export class SessionRecovery {
 
   start(): void {
     this.unsubscribe = this.options.connection.state.subscribe(() => {
-      if (this.stopped) return;
+      if (this.stopped || this.accountChanged) return;
       if (this.options.connection.state.getSnapshot() === 'connected' && this.failedSince === undefined && this.lease) this.show('connected');
       // Native Connection owns its retry loop. Its own reconnect() emits
       // "connecting" synchronously: forcing another reconnect here cancels
@@ -71,26 +72,27 @@ export class SessionRecovery {
     this.stopped = true; clearTimeout(this.timer); this.probeAbort?.abort(); this.authAbort?.abort(); this.unsubscribe?.();
   }
   wake(): void {
-    if (this.stopped || this.state === 'account-changed') return;
+    if (this.stopped || this.accountChanged) return;
     const state = this.options.connection.state.getSnapshot();
     this.needsReconnect ||= state === 'disconnected' || (state === 'connected' && this.lease !== undefined && this.now() - this.lastSuccess > this.lease.leaseMs / 2);
     void this.check();
   }
   networkChanged(): void {
+    if (this.stopped || this.accountChanged) return;
     if (this.options.online?.() === false) {
       this.probeAbort?.abort(); this.authAbort?.abort(); this.needsReconnect = true; this.show('offline');
     } else this.wake();
   }
   /** Must be called directly from a user gesture so a login window is allowed. */
   login(): void {
-    if (this.stopped || this.state === 'account-changed') return;
+    if (this.stopped || this.accountChanged) return;
     this.authAbort?.abort();
     const abort = this.authAbort = new AbortController();
     const result = this.options.authenticate(true, abort.signal);
     void result.then(() => { if (!abort.signal.aborted && !this.stopped) { this.needsReconnect = true; void this.check(); } }, () => {}).finally(() => { if (this.authAbort === abort) this.authAbort = undefined; });
   }
   check(): Promise<void> {
-    if (this.stopped || this.state === 'account-changed') return Promise.resolve();
+    if (this.stopped || this.accountChanged) return Promise.resolve();
     if (this.pending) { this.queued = true; return this.pending; }
     clearTimeout(this.timer);
     this.pending = this.run().finally(() => {
@@ -100,10 +102,10 @@ export class SessionRecovery {
     return this.pending;
   }
   private show(state: RecoveryState): void {
-    if (!this.stopped && this.state !== state) { this.state = state; this.options.render(state); }
+    if (!this.stopped && (!this.accountChanged || state === 'account-changed') && this.state !== state) { this.state = state; this.options.render(state); }
   }
   private schedule(delay: number): void {
-    if (this.stopped || this.state === 'account-changed') return;
+    if (this.stopped || this.accountChanged) return;
     clearTimeout(this.timer); this.timer = setTimeout(() => { void this.check(); }, delay);
   }
   private async run(): Promise<void> {
@@ -113,7 +115,11 @@ export class SessionRecovery {
     try {
       const lease = await this.options.probe(abort.signal);
       if (this.stopped) return;
-      if (this.lease && lease.principal !== this.lease.principal) { this.show('account-changed'); return; }
+      if (this.lease && lease.principal !== this.lease.principal) {
+        this.accountChanged = true; this.queued = false; this.needsReconnect = false;
+        clearTimeout(this.timer); this.authAbort?.abort(); this.authAbort = undefined;
+        this.show('account-changed'); return;
+      }
       const recovered = this.failedSince !== undefined;
       const changed = this.lease !== undefined && this.lease.sessionId !== lease.sessionId;
       this.lease = lease; this.lastSuccess = this.now(); this.failedSince = undefined; this.silentAttempted = false;

@@ -9,7 +9,7 @@ import { mkdir as mkdir2 } from "node:fs/promises";
 import lockfile from "proper-lockfile";
 
 // src/controller.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 
 // src/model.ts
 var PREFIX = "/__dsh_cloudflare_access";
@@ -117,7 +117,7 @@ import { access, chmod, mkdtemp, readFile as readFile2, rm, unlink as unlink2 } 
 import { constants } from "node:fs";
 import { join as join2 } from "node:path";
 import { homedir, tmpdir } from "node:os";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID as randomUUID2 } from "node:crypto";
 
 // src/store.ts
 import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
@@ -172,18 +172,26 @@ async function privateWrite(path, content) {
 var run = promisify(execFile);
 var CLOUDFLARED_VERSION = "2026.9.1";
 var Connector = class {
-  constructor(directory, configuredPath, onFailure = () => {
-  }) {
+  constructor(directory, configuredPath) {
     this.directory = directory;
     this.configuredPath = configuredPath;
-    this.onFailure = onFailure;
   }
   directory;
   configuredPath;
-  onFailure;
   child;
-  stopping = false;
+  stopping = true;
+  generation = 0;
+  intent = 0;
+  token;
+  pending;
+  stopPending;
+  retryTimer;
+  stableTimer;
+  retries = 0;
+  cleanups = /* @__PURE__ */ new Set();
   status = "stopped";
+  lastError;
+  retryAt;
   async executable() {
     const candidates = this.configuredPath ? [this.configuredPath] : [join2(this.directory, "bin", "cloudflared"), join2(homedir(), ".local/bin/cloudflared"), "/opt/homebrew/bin/cloudflared", "/usr/local/bin/cloudflared", "/usr/bin/cloudflared"];
     for (const file of candidates) {
@@ -197,7 +205,7 @@ var Connector = class {
     return void 0;
   }
   async install() {
-    if (this.child) fail("RUNNING", "\u8BF7\u5148\u505C\u7528\u5165\u53E3\uFF0C\u518D\u5B89\u88C5\u8FDE\u63A5\u5668\u3002");
+    if (!this.stopping || this.child || this.pending) fail("RUNNING", "\u8BF7\u5148\u505C\u7528\u5165\u53E3\uFF0C\u518D\u5B89\u88C5\u8FDE\u63A5\u5668\u3002");
     const platform = process.platform, arch = process.arch;
     if (!["darwin", "linux"].includes(platform) || !["arm64", "x64"].includes(arch)) fail("PLATFORM", "\u81EA\u52A8\u5B89\u88C5\u6682\u652F\u6301 macOS/Linux \u7684 arm64 \u548C x64\uFF1B\u8BF7\u624B\u52A8\u6307\u5B9A\u5B98\u65B9 cloudflared \u8DEF\u5F84\u3002");
     const assetName = `cloudflared-${platform}-${arch === "x64" ? "amd64" : arch}${platform === "darwin" ? ".tgz" : ""}`;
@@ -239,54 +247,133 @@ var Connector = class {
     }
   }
   async start(token) {
-    if (this.child) return;
-    const binary = await this.executable();
-    if (!binary) fail("CONNECTOR_MISSING", "\u5C1A\u672A\u5B89\u88C5\u5B98\u65B9 cloudflared\uFF0C\u8BF7\u70B9\u51FB\u5B89\u88C5\u8FDE\u63A5\u5668\u3002");
-    const tokenFile = join2(this.directory, "tunnel-token.runtime");
-    await privateWrite(tokenFile, token);
+    const intent = ++this.intent;
+    if (this.stopPending) await this.stopPending;
+    if (intent !== this.intent) return;
+    if (!this.stopping) return this.pending;
     this.stopping = false;
-    this.status = "starting";
-    const child = spawn(binary, ["tunnel", "--no-autoupdate", "run", "--token-file", tokenFile], { stdio: ["ignore", "ignore", "pipe"], env: { ...process.env, TUNNEL_LOGLEVEL: "info" } });
-    this.child = child;
-    let tail = "";
-    child.stderr?.on("data", (data) => {
-      tail = (tail + data.toString()).slice(-4096);
-      if (tail.includes("Registered tunnel connection")) this.status = "connected";
-    });
-    child.once("exit", () => {
-      this.child = void 0;
-      this.status = this.stopping ? "stopped" : "failed";
-      void unlink2(tokenFile).catch(() => {
-      });
-      if (!this.stopping) this.onFailure();
-    });
-    await new Promise((resolve, reject) => {
-      child.once("spawn", resolve);
-      child.once("error", () => {
-        this.child = void 0;
-        this.status = "failed";
-        void unlink2(tokenFile).catch(() => {
-        });
-        reject(new Error("connector spawn"));
-      });
-    });
+    this.token = token;
+    this.retries = 0;
+    await this.launch();
   }
-  async stop() {
-    this.stopping = true;
-    const child = this.child;
-    if (child) await new Promise((resolve) => {
-      const timer = setTimeout(() => child.kill("SIGKILL"), 5e3);
-      timer.unref();
-      child.once("exit", () => {
-        clearTimeout(timer);
-        resolve();
+  active(generation) {
+    return !this.stopping && generation === this.generation;
+  }
+  cleanup(path) {
+    const done = unlink2(path).catch(() => {
+    });
+    this.cleanups.add(done);
+    void done.then(() => this.cleanups.delete(done));
+  }
+  retry(generation, message) {
+    if (!this.active(generation) || this.retryTimer) return;
+    clearTimeout(this.stableTimer);
+    const cap = Math.min(6e4, 1e3 * 2 ** Math.min(this.retries++, 6));
+    const delay = Math.ceil(cap * (0.8 + Math.random() * 0.2));
+    this.status = "retrying";
+    this.lastError = message;
+    this.retryAt = Date.now() + delay;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = void 0;
+      this.retryAt = void 0;
+      if (this.active(generation)) void this.launch();
+    }, delay);
+    this.retryTimer.unref();
+  }
+  launch() {
+    if (this.pending) return this.pending;
+    const generation = ++this.generation;
+    const task = this.run(generation).catch((error) => this.retry(generation, publicError(error).message)).finally(() => {
+      if (this.pending === task) this.pending = void 0;
+    });
+    this.pending = task;
+    return task;
+  }
+  async run(generation) {
+    const binary = await this.executable();
+    if (!this.active(generation)) return;
+    if (!binary) fail("CONNECTOR_MISSING", "\u5C1A\u672A\u5B89\u88C5\u5B98\u65B9 cloudflared\uFF0C\u8BF7\u5148\u505C\u7528\u5165\u53E3\u5E76\u5B89\u88C5\u8FDE\u63A5\u5668\u3002");
+    const tokenFile = join2(this.directory, `tunnel-token-${randomUUID2()}.runtime`);
+    let child;
+    try {
+      await privateWrite(tokenFile, this.token);
+      if (!this.active(generation)) {
+        this.cleanup(tokenFile);
+        return;
+      }
+      this.status = "starting";
+      child = spawn(binary, ["tunnel", "--no-autoupdate", "run", "--token-file", tokenFile], { stdio: ["ignore", "ignore", "pipe"], env: { ...process.env, TUNNEL_LOGLEVEL: "info" } });
+      this.child = child;
+      const owned = child;
+      let tail = "", ended = false, spawned = false;
+      const endedOnce = () => {
+        if (ended) return;
+        ended = true;
+        this.cleanup(tokenFile);
+        if (this.child === owned) this.child = void 0;
+        this.retry(generation, "\u8FDE\u63A5\u5668\u610F\u5916\u9000\u51FA\uFF0C\u6B63\u5728\u81EA\u52A8\u91CD\u8BD5\u3002");
+      };
+      child.stderr?.on("data", (data) => {
+        if (!this.active(generation) || ended) return;
+        tail = (tail + data.toString()).slice(-4096);
+        if (this.status !== "connected" && tail.includes("Registered tunnel connection")) {
+          this.status = "connected";
+          this.lastError = void 0;
+          this.stableTimer = setTimeout(() => {
+            if (this.active(generation)) this.retries = 0;
+          }, 3e4);
+          this.stableTimer.unref();
+        }
       });
-      child.kill("SIGTERM");
+      child.once("exit", endedOnce);
+      await new Promise((resolve) => {
+        owned.once("spawn", () => {
+          spawned = true;
+          resolve();
+        });
+        owned.on("error", () => {
+          if (!spawned) {
+            endedOnce();
+            resolve();
+          }
+        });
+      });
+    } catch (error) {
+      if (!child) this.cleanup(tokenFile);
+      throw error;
+    }
+  }
+  stop() {
+    ++this.intent;
+    if (this.stopPending) return this.stopPending;
+    this.stopping = true;
+    this.token = void 0;
+    ++this.generation;
+    clearTimeout(this.retryTimer);
+    clearTimeout(this.stableTimer);
+    this.retryTimer = void 0;
+    this.retryAt = void 0;
+    const task = (async () => {
+      await this.pending;
+      const child = this.child;
+      if (child && child.exitCode === null && child.signalCode === null) await new Promise((resolve) => {
+        const timer = setTimeout(() => child.kill("SIGKILL"), 5e3);
+        timer.unref();
+        child.once("exit", () => {
+          clearTimeout(timer);
+          resolve();
+        });
+        child.kill("SIGTERM");
+      });
+      this.child = void 0;
+      this.status = "stopped";
+      this.lastError = void 0;
+      await Promise.all(this.cleanups);
+    })().finally(() => {
+      if (this.stopPending === task) this.stopPending = void 0;
     });
-    this.child = void 0;
-    this.status = "stopped";
-    await unlink2(join2(this.directory, "tunnel-token.runtime")).catch(() => {
-    });
+    this.stopPending = task;
+    return task;
   }
 };
 
@@ -883,10 +970,7 @@ var Controller = class {
     this.native = native;
     this.maxTokenAgeSeconds = maxTokenAgeSeconds;
     this.provisioner = new Provisioner(store, vault, gatewayPort);
-    this.connector = new Connector(store.directory, cloudflaredPath, () => {
-      void this.gateway?.stop();
-      this.gateway = void 0;
-    });
+    this.connector = new Connector(store.directory, cloudflaredPath);
   }
   store;
   vault;
@@ -913,7 +997,7 @@ var Controller = class {
   }
   status() {
     const { state } = this.store;
-    return { remote: false, phase: state.phase, enabled: state.enabled, running: !!this.gateway, connector: this.connector.status, busy: this.busy, deployment: state.deployment, lastError: state.lastError };
+    return { remote: false, phase: state.phase, enabled: state.enabled, running: !!this.gateway, connector: this.connector.status, retryAt: this.connector.retryAt, busy: this.busy, deployment: state.deployment, lastError: this.connector.lastError ?? state.lastError };
   }
   async execute(action, body2) {
     if (this.disposed) fail("DISPOSED", "\u63D2\u4EF6\u6B63\u5728\u505C\u6B62\u3002", 503);
@@ -941,7 +1025,7 @@ var Controller = class {
       case "preview": {
         this.clearPlan();
         const client = api(), preview = await this.provisioner.preview(client, body2.setup);
-        const plan = { id: randomUUID2(), api: client, preview, expires: Date.now() + 6e5 };
+        const plan = { id: randomUUID3(), api: client, preview, expires: Date.now() + 6e5 };
         this.plan = plan;
         this.planTimer = setTimeout(() => this.clearPlan(), 6e5);
         this.planTimer.unref();

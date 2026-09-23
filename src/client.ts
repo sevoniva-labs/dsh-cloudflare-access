@@ -46,7 +46,7 @@ export function createClient(require: (name: string) => unknown) {
         button('退出登录', async () => { await api('logout', {}); location.assign('/cdn-cgi/access/logout'); }),
       )) : h(R.Fragment, null,
         box(h(R.Fragment, null, h('strong', null, status.running ? '已启用' : '未启用'),
-          h('p', null, `隧道：${({ stopped: '未启动', starting: '连接中', connected: '已连接', failed: '连接失败' } as Record<string, string>)[status.connector ?? 'stopped'] ?? '未知'}`),
+          h('p', null, `隧道：${({ stopped: '未启动', starting: '连接中', connected: '已连接', retrying: '等待重连', failed: '连接失败' } as Record<string, string>)[status.connector ?? 'stopped'] ?? '未知'}`),
           d && h('p', null, h('a', { href: `https://${d.hostname}`, target: '_blank', rel: 'noreferrer' }, d.hostname)),
           d && h('p', null, `设备验证：${d.postureChecks.length ? '已配置' : '未配置'}`),
           status.lastError && h('p', null, status.lastError),
