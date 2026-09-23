@@ -1,6 +1,6 @@
 import { PREFIX } from './model.ts';
 
-export type RecoveryState = 'connected' | 'recovering' | 'offline' | 'login' | 'denied' | 'unavailable' | 'account-changed';
+export type RecoveryState = 'connected' | 'connecting' | 'recovering' | 'offline' | 'login' | 'denied' | 'unavailable' | 'account-changed';
 export interface Lease { ok: true; sessionId: string; principal: string; expires: number; leaseMs: number }
 export interface BrowserConnection {
   reconnect(): void;
@@ -41,6 +41,7 @@ export interface RecoveryOptions {
 export class SessionRecovery {
   private stopped = false;
   private accountChanged = false;
+  private hasConnected = false;
   private pending?: Promise<void>;
   private queued = false;
   private timer?: ReturnType<typeof setTimeout>;
@@ -60,11 +61,11 @@ export class SessionRecovery {
   start(): void {
     this.unsubscribe = this.options.connection.state.subscribe(() => {
       if (this.stopped || this.accountChanged) return;
-      if (this.options.connection.state.getSnapshot() === 'connected' && this.failedSince === undefined && this.lease) this.show('connected');
+      if (this.failedSince === undefined && this.lease) this.showTransport();
       // Native Connection owns its retry loop. Its own reconnect() emits
       // "connecting" synchronously: forcing another reconnect here cancels
       // slow handshakes and creates a self-sustaining reconnect loop.
-      else if (this.options.connection.state.getSnapshot() !== 'connected') this.schedule(1000);
+      if (this.options.connection.state.getSnapshot() !== 'connected') this.schedule(1000);
     });
     void this.check();
   }
@@ -104,6 +105,11 @@ export class SessionRecovery {
   private show(state: RecoveryState): void {
     if (!this.stopped && (!this.accountChanged || state === 'account-changed') && this.state !== state) { this.state = state; this.options.render(state); }
   }
+  private showTransport(): void {
+    if (this.options.connection.state.getSnapshot() === 'connected') {
+      this.hasConnected = true; this.show('connected');
+    } else this.show(this.hasConnected ? 'recovering' : 'connecting');
+  }
   private schedule(delay: number): void {
     if (this.stopped || this.accountChanged) return;
     clearTimeout(this.timer); this.timer = setTimeout(() => { void this.check(); }, delay);
@@ -128,7 +134,7 @@ export class SessionRecovery {
       if (this.needsReconnect && this.now() - this.lastReconnect >= 3000) {
         this.needsReconnect = false; this.lastReconnect = this.now(); this.options.connection.reconnect();
       }
-      this.show(this.options.connection.state.getSnapshot() === 'connected' ? 'connected' : 'recovering');
+      this.showTransport();
       const expiryDelay = lease.expires - this.now() + 250;
       this.schedule(Math.max(1000, Math.min(this.needsReconnect ? 3000 : 30_000, lease.leaseMs / 3, expiryDelay)));
     } catch (error) {
@@ -139,7 +145,7 @@ export class SessionRecovery {
       else if (kind === 'denied') this.show('denied');
       else if (kind === 'login') {
         if (!this.silentAttempted && !this.authAbort) {
-          this.silentAttempted = true; this.show('recovering');
+          this.silentAttempted = true; this.show(this.hasConnected ? 'recovering' : 'connecting');
           const auth = this.authAbort = new AbortController();
           try {
             await this.options.authenticate(false, auth.signal);
@@ -191,24 +197,33 @@ export function authenticateBrowser(interactive: boolean, signal: AbortSignal): 
 
 export function installSessionRecovery(connection: BrowserConnection): () => void {
   let banner: HTMLDivElement | undefined;
+  let bannerTimer: ReturnType<typeof setTimeout> | undefined;
   const labels: Record<Exclude<RecoveryState, 'connected'>, string> = {
-    recovering: '正在恢复连接…', offline: '网络已断开，恢复后自动连接。', login: '登录已过期，请重新登录。',
+    connecting: '正在连接服务…', recovering: '正在重新连接…', offline: '网络已断开，恢复后自动连接。', login: '登录已过期，请重新登录。',
     denied: '当前账号无访问权限。', unavailable: '服务暂不可用，正在重试。', 'account-changed': '登录账号已更换，请保存草稿后重新打开页面。',
   };
   const recovery = new SessionRecovery({ connection, probe: probeLease, authenticate: authenticateBrowser, online: () => navigator.onLine,
     render: state => {
+      clearTimeout(bannerTimer); bannerTimer = undefined;
       banner?.remove(); banner = undefined;
       if (state === 'connected') return;
-      banner = document.createElement('div'); banner.setAttribute('role', 'status');
-      banner.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:99999;background:#27272a;color:white;padding:12px 20px;border-radius:8px;box-shadow:0 4px 24px #0005;display:flex;align-items:center;gap:12px';
-      const text = document.createElement('span'); text.textContent = labels[state]; banner.append(text);
-      if (state !== 'account-changed' && state !== 'offline') {
-        const button = document.createElement('button'); button.type = 'button';
-        button.textContent = state === 'login' ? '登录' : '重试';
-        button.style.cssText = 'color:inherit;background:none;border:1px solid #888;border-radius:4px;padding:4px 10px;cursor:pointer';
-        button.onclick = () => state === 'login' ? recovery.login() : recovery.wake(); banner.append(button);
-      }
-      document.body.append(banner);
+      // Harness owns its initial loading UI. Only surface a slow handshake or
+      // sustained reconnection; auth failures and offline state remain immediate.
+      const display = () => {
+        bannerTimer = undefined;
+        banner = document.createElement('div'); banner.setAttribute('role', 'status');
+        banner.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:99999;background:#27272a;color:white;padding:12px 20px;border-radius:8px;box-shadow:0 4px 24px #0005;display:flex;align-items:center;gap:12px';
+        const text = document.createElement('span'); text.textContent = labels[state]; banner.append(text);
+        if (state !== 'account-changed' && state !== 'offline') {
+          const button = document.createElement('button'); button.type = 'button';
+          button.textContent = state === 'login' ? '登录' : '重试';
+          button.style.cssText = 'color:inherit;background:none;border:1px solid #888;border-radius:4px;padding:4px 10px;cursor:pointer';
+          button.onclick = () => state === 'login' ? recovery.login() : recovery.wake(); banner.append(button);
+        }
+        document.body.append(banner);
+      };
+      const delay = state === 'connecting' ? 8000 : state === 'recovering' ? 3000 : 0;
+      if (delay) bannerTimer = setTimeout(display, delay); else display();
     },
   });
   const visible = () => { if (document.visibilityState === 'visible') recovery.wake(); };
@@ -218,7 +233,7 @@ export function installSessionRecovery(connection: BrowserConnection): () => voi
   window.addEventListener('online', network); window.addEventListener('offline', network);
   recovery.start();
   return () => {
-    recovery.stop(); banner?.remove(); document.removeEventListener('visibilitychange', visible);
+    recovery.stop(); clearTimeout(bannerTimer); banner?.remove(); document.removeEventListener('visibilitychange', visible);
     window.removeEventListener('pageshow', wake); window.removeEventListener('focus', wake);
     window.removeEventListener('online', network); window.removeEventListener('offline', network);
   };

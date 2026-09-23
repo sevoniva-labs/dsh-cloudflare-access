@@ -70,6 +70,7 @@ var SessionRecovery = class {
   options;
   stopped = false;
   accountChanged = false;
+  hasConnected = false;
   pending;
   queued = false;
   timer;
@@ -87,8 +88,8 @@ var SessionRecovery = class {
   start() {
     this.unsubscribe = this.options.connection.state.subscribe(() => {
       if (this.stopped || this.accountChanged) return;
-      if (this.options.connection.state.getSnapshot() === "connected" && this.failedSince === void 0 && this.lease) this.show("connected");
-      else if (this.options.connection.state.getSnapshot() !== "connected") this.schedule(1e3);
+      if (this.failedSince === void 0 && this.lease) this.showTransport();
+      if (this.options.connection.state.getSnapshot() !== "connected") this.schedule(1e3);
     });
     void this.check();
   }
@@ -152,6 +153,12 @@ var SessionRecovery = class {
       this.options.render(state);
     }
   }
+  showTransport() {
+    if (this.options.connection.state.getSnapshot() === "connected") {
+      this.hasConnected = true;
+      this.show("connected");
+    } else this.show(this.hasConnected ? "recovering" : "connecting");
+  }
   schedule(delay) {
     if (this.stopped || this.accountChanged) return;
     clearTimeout(this.timer);
@@ -194,7 +201,7 @@ var SessionRecovery = class {
         this.lastReconnect = this.now();
         this.options.connection.reconnect();
       }
-      this.show(this.options.connection.state.getSnapshot() === "connected" ? "connected" : "recovering");
+      this.showTransport();
       const expiryDelay = lease.expires - this.now() + 250;
       this.schedule(Math.max(1e3, Math.min(this.needsReconnect ? 3e3 : 3e4, lease.leaseMs / 3, expiryDelay)));
     } catch (error) {
@@ -207,7 +214,7 @@ var SessionRecovery = class {
       else if (kind === "login") {
         if (!this.silentAttempted && !this.authAbort) {
           this.silentAttempted = true;
-          this.show("recovering");
+          this.show(this.hasConnected ? "recovering" : "connecting");
           const auth = this.authAbort = new AbortController();
           try {
             await this.options.authenticate(false, auth.signal);
@@ -273,8 +280,10 @@ function authenticateBrowser(interactive, signal) {
 }
 function installSessionRecovery(connection) {
   let banner;
+  let bannerTimer;
   const labels = {
-    recovering: "\u6B63\u5728\u6062\u590D\u8FDE\u63A5\u2026",
+    connecting: "\u6B63\u5728\u8FDE\u63A5\u670D\u52A1\u2026",
+    recovering: "\u6B63\u5728\u91CD\u65B0\u8FDE\u63A5\u2026",
     offline: "\u7F51\u7EDC\u5DF2\u65AD\u5F00\uFF0C\u6062\u590D\u540E\u81EA\u52A8\u8FDE\u63A5\u3002",
     login: "\u767B\u5F55\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u91CD\u65B0\u767B\u5F55\u3002",
     denied: "\u5F53\u524D\u8D26\u53F7\u65E0\u8BBF\u95EE\u6743\u9650\u3002",
@@ -287,24 +296,32 @@ function installSessionRecovery(connection) {
     authenticate: authenticateBrowser,
     online: () => navigator.onLine,
     render: (state) => {
+      clearTimeout(bannerTimer);
+      bannerTimer = void 0;
       banner?.remove();
       banner = void 0;
       if (state === "connected") return;
-      banner = document.createElement("div");
-      banner.setAttribute("role", "status");
-      banner.style.cssText = "position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:99999;background:#27272a;color:white;padding:12px 20px;border-radius:8px;box-shadow:0 4px 24px #0005;display:flex;align-items:center;gap:12px";
-      const text = document.createElement("span");
-      text.textContent = labels[state];
-      banner.append(text);
-      if (state !== "account-changed" && state !== "offline") {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.textContent = state === "login" ? "\u767B\u5F55" : "\u91CD\u8BD5";
-        button.style.cssText = "color:inherit;background:none;border:1px solid #888;border-radius:4px;padding:4px 10px;cursor:pointer";
-        button.onclick = () => state === "login" ? recovery.login() : recovery.wake();
-        banner.append(button);
-      }
-      document.body.append(banner);
+      const display = () => {
+        bannerTimer = void 0;
+        banner = document.createElement("div");
+        banner.setAttribute("role", "status");
+        banner.style.cssText = "position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:99999;background:#27272a;color:white;padding:12px 20px;border-radius:8px;box-shadow:0 4px 24px #0005;display:flex;align-items:center;gap:12px";
+        const text = document.createElement("span");
+        text.textContent = labels[state];
+        banner.append(text);
+        if (state !== "account-changed" && state !== "offline") {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.textContent = state === "login" ? "\u767B\u5F55" : "\u91CD\u8BD5";
+          button.style.cssText = "color:inherit;background:none;border:1px solid #888;border-radius:4px;padding:4px 10px;cursor:pointer";
+          button.onclick = () => state === "login" ? recovery.login() : recovery.wake();
+          banner.append(button);
+        }
+        document.body.append(banner);
+      };
+      const delay = state === "connecting" ? 8e3 : state === "recovering" ? 3e3 : 0;
+      if (delay) bannerTimer = setTimeout(display, delay);
+      else display();
     }
   });
   const visible = () => {
@@ -319,6 +336,7 @@ function installSessionRecovery(connection) {
   recovery.start();
   return () => {
     recovery.stop();
+    clearTimeout(bannerTimer);
     banner?.remove();
     document.removeEventListener("visibilitychange", visible);
     window.removeEventListener("pageshow", wake);

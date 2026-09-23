@@ -14,11 +14,13 @@ const listen = async server => { server.listen(0, '127.0.0.1'); await once(serve
 const close = server => new Promise(resolve => { if (!server) return resolve(); server.closeAllConnections(); server.close(resolve); });
 const bundle = await build({ entryPoints: ['src/session-recovery.ts'], bundle: true, format: 'iife', globalName: 'Recovery', platform: 'browser', write: false });
 const html = `<!doctype html><meta charset="utf-8"><title>Session recovery fixture</title><textarea aria-label="Draft"></textarea><button id="command">Run fixture</button><script src="/fixture.js"></script><script>
-window.connects=0;window.networkState='connected';const listeners=new Set();let handshake;
+window.connects=0;window.networkState=undefined;const listeners=new Set();let handshake;
 const connection={reconnect(){window.connects++;clearTimeout(handshake);window.networkState='connecting';listeners.forEach(f=>f());handshake=setTimeout(()=>{window.networkState='connected';listeners.forEach(f=>f())},5000)},state:{getSnapshot:()=>window.networkState,subscribe:f=>{listeners.add(f);return()=>listeners.delete(f)}}};
 window.recover=()=>{window.networkState='disconnected';listeners.forEach(f=>f());window.dispatchEvent(new Event('online'))};
 window.reportConnection=state=>{window.networkState=state;listeners.forEach(f=>f())};
+window.notices=[];new MutationObserver(()=>{const notice=document.querySelector('[role="status"]');if(notice)window.notices.push(notice.textContent)}).observe(document.body,{childList:true,subtree:true});
 window.disposeRecovery=Recovery.installSessionRecovery(connection);
+window.reportConnection('connecting');handshake=setTimeout(()=>window.reportConnection('connected'),Number(new URLSearchParams(location.search).get('initialDelay')||1000));
 document.getElementById('command').onclick=()=>fetch('/fixture-command',{method:'POST'});
 </script>`;
 try {
@@ -35,7 +37,7 @@ try {
   await gateway.start();
   const gatewayPort = gateway.server.address().port;
   edge = createServer((req, res) => {
-    if (req.url === '/') { res.writeHead(200, { 'content-type': 'text/html' }); res.end(html); return; }
+    if (req.url?.split('?')[0] === '/') { res.writeHead(200, { 'content-type': 'text/html' }); res.end(html); return; }
     if (req.url === '/fixture.js') { res.writeHead(200, { 'content-type': 'text/javascript' }); res.end(bundle.outputFiles[0].text); return; }
     if (req.url === '/fixture-command') { commands++; res.end('ok'); return; }
     if (req.url === '/fixture-login' && req.method === 'POST') { mode = 'valid'; token = 'interactive'; res.end('ok'); return; }
@@ -58,7 +60,21 @@ try {
   const context = await browser.newContext();
   const page = await context.newPage(), errors = [];
   page.on('pageerror', e => errors.push(e.message));
-  await page.goto(`http://127.0.0.1:${port}`);
+  for (const delay of [1000, 3000, 5000]) {
+    await page.goto(`http://127.0.0.1:${port}/?initialDelay=${delay}`);
+    await page.waitForFunction(() => window.networkState === 'connected');
+    assert.deepEqual(await page.evaluate(() => window.notices), []);
+    assert.equal(await page.evaluate(() => window.connects), 0);
+  }
+  console.log('PASS browser: repeated page loads with 1/3/5-second initial handshakes show no recovery warning');
+  const slow = await context.newPage();
+  await slow.goto(`http://127.0.0.1:${port}/?initialDelay=10000`);
+  await slow.getByText('正在连接服务…', { exact: true }).waitFor();
+  await slow.waitForFunction(() => window.networkState === 'connected');
+  assert.equal(await slow.locator('[role="status"]').count(), 0);
+  assert.equal(await slow.evaluate(() => window.connects), 0);
+  await slow.close();
+  console.log('PASS browser: a slow first handshake is shown accurately and clears without restarting it');
   await page.getByLabel('Draft').fill('Preserve this unsent draft');
   await page.getByRole('button', { name: 'Run fixture', exact: true }).click();
   await page.waitForFunction(() => !!window.disposeRecovery);
@@ -76,7 +92,7 @@ try {
   await page.waitForFunction(() => window.networkState === 'connected', undefined, { timeout: 15_000 });
   await page.waitForTimeout(7000);
   assert.equal(await connects(), before + 1);
-  assert.equal(await page.getByText('正在恢复连接…', { exact: true }).count(), 0);
+  assert.equal(await page.getByText('正在重新连接…', { exact: true }).count(), 0);
   console.log('PASS browser: outage/recovery preserves draft and does not replay commands');
   console.log('PASS browser: slow native handshake completes without a forced-reconnect feedback loop');
 

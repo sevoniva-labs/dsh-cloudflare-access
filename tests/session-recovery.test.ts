@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { authenticateBrowser, AUTH_MESSAGE, probeLease, ProbeError, SessionRecovery, type Lease, type RecoveryState } from '../src/session-recovery.ts';
+import { authenticateBrowser, AUTH_MESSAGE, installSessionRecovery, probeLease, ProbeError, SessionRecovery, type Lease, type RecoveryState } from '../src/session-recovery.ts';
 
 let controllers: SessionRecovery[] = [];
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-01-01T00:00:00Z')); });
 afterEach(() => { controllers.forEach(c => c.stop()); controllers = []; vi.useRealTimers(); vi.unstubAllGlobals(); });
 const lease = (sessionId = 'one', principal = 'owner'): Lease => ({ ok: true, sessionId, principal, expires: Date.now() + 3600_000, leaseMs: 90_000 });
 function setup() {
-  let online = true, state = 'connected';
+  let online = true, state: string | undefined = 'connected';
   const listeners = new Set<() => void>();
   const connection = { reconnect: vi.fn(), state: { getSnapshot: () => state, subscribe: (cb: () => void) => { listeners.add(cb); return () => { listeners.delete(cb); }; } } };
   const probe = vi.fn<(_signal: AbortSignal) => Promise<Lease>>().mockImplementation(async () => lease());
@@ -14,8 +14,67 @@ function setup() {
   const render = vi.fn<(_state: RecoveryState) => void>();
   const recovery = new SessionRecovery({ connection, probe, authenticate, render, online: () => online });
   controllers.push(recovery);
-  return { recovery, connection, probe, authenticate, render, setOnline: (value: boolean) => { online = value; recovery.networkChanged(); }, setState: (value: string) => { state = value; listeners.forEach(fn => fn()); } };
+  return { recovery, connection, probe, authenticate, render, setOnline: (value: boolean) => { online = value; recovery.networkChanged(); }, setState: (value: string | undefined) => { state = value; listeners.forEach(fn => fn()); } };
 }
+test('first connection is not recovery, including when the native service starts later', async () => {
+  const s = setup(); s.setState(undefined); s.recovery.start(); await vi.advanceTimersByTimeAsync(0);
+  expect(s.render).toHaveBeenLastCalledWith('connecting');
+  s.setState('connecting'); await vi.advanceTimersByTimeAsync(6000);
+  expect(s.connection.reconnect).not.toHaveBeenCalled();
+  expect(s.render.mock.calls).toEqual([['connecting']]);
+  s.setState('connected'); expect(s.render).toHaveBeenLastCalledWith('connected');
+  s.setState('disconnected'); expect(s.render).toHaveBeenLastCalledWith('recovering');
+});
+test('normal startup and brief reconnects stay quiet, slow connections and auth failures remain visible', async () => {
+  const s = setup(), visible = new Set<{ textContent?: string; children: { textContent?: string }[] }>();
+  const element = () => {
+    const el = { textContent: '', children: [] as { textContent?: string }[], style: { cssText: '' }, setAttribute() {}, append(child: { textContent?: string }) { this.children.push(child); }, remove() { visible.delete(el); } };
+    return el;
+  };
+  vi.stubGlobal('document', { createElement: element, body: { append: (el: ReturnType<typeof element>) => visible.add(el) }, addEventListener() {}, removeEventListener() {} });
+  vi.stubGlobal('window', { addEventListener() {}, removeEventListener() {} });
+  vi.stubGlobal('navigator', { onLine: true });
+  const fetcher = vi.fn().mockImplementation(async () => Response.json(lease())); vi.stubGlobal('fetch', fetcher);
+  s.setState(undefined);
+  const dispose = installSessionRecovery(s.connection);
+  const text = () => [...visible].flatMap(el => el.children.map(child => child.textContent)).join(' ');
+  try {
+    await vi.advanceTimersByTimeAsync(0); s.setState('connecting');
+    await vi.advanceTimersByTimeAsync(6000); expect(visible.size).toBe(0);
+    s.setState('connected'); await vi.advanceTimersByTimeAsync(5000); expect(visible.size).toBe(0);
+    s.setState('connecting'); await vi.advanceTimersByTimeAsync(2000);
+    expect(visible.size).toBe(0); s.setState('connected');
+    s.setState('disconnected'); await vi.advanceTimersByTimeAsync(3000);
+    expect(text()).toContain('正在重新连接');
+    s.setState('connected'); expect(visible.size).toBe(0);
+    fetcher.mockImplementation(async () => new Response('', { status: 403 }));
+    s.setState('disconnected'); await vi.advanceTimersByTimeAsync(1000);
+    expect(text()).toContain('当前账号无访问权限');
+    dispose(); await vi.advanceTimersByTimeAsync(120_000); expect(visible.size).toBe(0);
+  } finally { dispose(); }
+});
+test('a genuinely slow first connection is shown after the grace period and cancels on dispose', async () => {
+  const s = setup(), visible = new Set<unknown>(), appended: string[] = [];
+  const element = () => {
+    const el = { textContent: '', style: { cssText: '' }, setAttribute() {}, append(child: { textContent: string }) { appended.push(child.textContent); }, remove() { visible.delete(el); } };
+    return el;
+  };
+  vi.stubGlobal('document', { createElement: element, body: { append: (el: unknown) => visible.add(el) }, addEventListener() {}, removeEventListener() {} });
+  vi.stubGlobal('window', { addEventListener() {}, removeEventListener() {} });
+  vi.stubGlobal('navigator', { onLine: true });
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => Response.json(lease())));
+  s.setState('connecting');
+  let dispose = installSessionRecovery(s.connection);
+  try {
+    await vi.advanceTimersByTimeAsync(7999); expect(visible.size).toBe(0);
+    await vi.advanceTimersByTimeAsync(1); expect(visible.size).toBe(1); expect(appended).toContain('正在连接服务…');
+    expect(appended).not.toContain('正在重新连接…');
+    s.setState('connected'); expect(visible.size).toBe(0); dispose();
+    s.setState(undefined); dispose = installSessionRecovery(s.connection);
+    await vi.advanceTimersByTimeAsync(0); dispose(); await vi.advanceTimersByTimeAsync(9000);
+    expect(visible.size).toBe(0);
+  } finally { dispose(); }
+});
 test('healthy lease heartbeats do not reload or repeatedly reconnect', async () => {
   const s = setup(); s.recovery.start(); await vi.advanceTimersByTimeAsync(91_000);
   expect(s.probe).toHaveBeenCalledTimes(4); expect(s.connection.reconnect).not.toHaveBeenCalled();
