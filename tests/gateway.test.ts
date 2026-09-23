@@ -26,6 +26,39 @@ beforeEach(async () => {
 });
 afterEach(async () => { await gateway?.stop(); await native?.close(); });
 describe('real official connection + protected loopback gateway', () => {
+  test('browser-only static caching never caches pages, API, streams or authentication failures', async () => {
+    const remove = native.ctx.get('webServer')!.register({ kind: 'prefix', path: '/assets', handler: (req, res) => {
+      res.writeHead(200, { 'content-type': req.url!.includes('html') ? 'text/html' : 'text/javascript', 'cache-control': 'public, max-age=31536000, immutable' }); res.end('fixture');
+    } });
+    try {
+      const path = '/assets/index-12345678.js';
+      const r = await http(path);
+      expect(r.headers['cache-control']).toBe('private, max-age=31536000, immutable');
+      expect(r.headers['cdn-cache-control']).toBe('no-store'); expect(r.headers['cloudflare-cdn-cache-control']).toBe('no-store');
+      expect((await http(path, { headers: { 'cf-access-jwt-assertion': 'bad' } })).status).toBe(403);
+      for (const other of ['/', '/assets/dynamic.js', '/assets/html-12345678.js', '/assets/index-12345678.js?dynamic=1']) expect((await http(other)).headers['cache-control']).toBe('no-store');
+      expect((await http('/api/echo', { method: 'POST', headers: { origin: `https://${deployment.hostname}` }, data: {} })).headers['cache-control']).toBe('no-store');
+    } finally { remove(); }
+  });
+  test('adapted bundles revalidate by final bytes, return 304 only after authentication, and invalidate on changes', async () => {
+    let source = readFileSync(createRequire(import.meta.url).resolve(`${MODELS_MODULE}/client`), 'utf8');
+    const path = `/plugins/??${MODELS_MODULE}/client.js&rev=abcdef123456`;
+    const remove = native.ctx.get('webServer')!.register({ kind: 'prefix', path: '/plugins', handler: (req, res) => {
+      expect(req.headers['if-none-match']).toBeUndefined();
+      res.writeHead(200, { 'content-type': 'text/javascript', etag: 'native-unchanged' }); res.end(source);
+    } });
+    try {
+      const first = await http(path), etag = String(first.headers.etag);
+      expect(first.status).toBe(200); expect(first.headers['cache-control']).toBe('private, no-cache');
+      expect(etag).toMatch(/^"[a-f0-9]{64}"$/);
+      const second = await http(path, { headers: { 'if-none-match': etag } });
+      expect(second.status).toBe(304); expect(second.text).toBe(''); expect(second.headers.etag).toBe(etag);
+      expect((await http(path, { headers: { 'if-none-match': etag, 'cf-access-jwt-assertion': 'bad' } })).status).toBe(403);
+      source += '\n// changed compatibility input';
+      const changed = await http(path, { headers: { 'if-none-match': etag } });
+      expect(changed.status).toBe(200); expect(changed.headers.etag).not.toBe(etag);
+    } finally { remove(); }
+  });
   test('lease returns opaque rotation metadata without bearer or identity claims', async () => {
     const call = () => http(`${PREFIX}/lease`, { method: 'POST', headers: { origin: `https://${deployment.hostname}` } });
     const a = await call(), b = await call();
@@ -120,7 +153,9 @@ describe('real official connection + protected loopback gateway', () => {
     const remove = native.ctx.get('webServer')!.registerUpgrade({ path: '/ws', handler(req, socket, head) { if (native.connection.requestRejection(req)) { socket.destroy(); return; } wss.handleUpgrade(req, socket, head, ws => { ws.on('message', d => ws.send(d)); }); } });
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers: { host: deployment.hostname, origin: `https://${deployment.hostname}`, 'cf-access-jwt-assertion': 'valid' } });
     await once(ws, 'open'); const message = once(ws, 'message'); ws.send('native-ws-ok'); expect(String((await message)[0])).toBe('native-ws-ok');
-    await once(ws, 'close'); remove(); wss.close();
+    await once(ws, 'close');
+    await expect.poll(() => gateway.diagnostics().webSockets).toMatchObject({ opened: 1, closed: 1, active: 0, lastClose: { reason: 'lease-expired' } });
+    remove(); wss.close();
   });
   test('WS rejects unauthenticated or cross-origin upgrade', async () => {
     for (const headers of [{ host: deployment.hostname }, { host: deployment.hostname, origin: 'https://evil.example', 'cf-access-jwt-assertion': 'valid' }]) {

@@ -30,7 +30,7 @@ export class Controller {
   }
   status() {
     const { state } = this.store;
-    return { remote: false, phase: state.phase, enabled: state.enabled, running: !!this.gateway, connector: this.connector.status, retryAt: this.connector.retryAt, busy: this.busy, deployment: state.deployment, lastError: this.connector.lastError ?? state.lastError };
+    return { remote: false, phase: state.phase, enabled: state.enabled, running: !!this.gateway, connector: this.connector.status, retryAt: this.connector.retryAt, busy: this.busy, deployment: state.deployment, lastError: this.connector.lastError ?? state.lastError, diagnostics: this.gateway?.diagnostics() };
   }
   async execute(action: string, body: Record<string, unknown>): Promise<unknown> {
     if (this.disposed) fail('DISPOSED', '插件正在停止。', 503);

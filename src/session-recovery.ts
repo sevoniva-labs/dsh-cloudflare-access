@@ -196,6 +196,9 @@ export function authenticateBrowser(interactive: boolean, signal: AbortSignal): 
 }
 
 export function installSessionRecovery(connection: BrowserConnection): () => void {
+  const globals = globalThis as typeof globalThis & { __DSH_CLOUDFLARE_RECOVERY_OWNERS__?: Set<object> };
+  const owners = globals.__DSH_CLOUDFLARE_RECOVERY_OWNERS__ ??= new Set<object>();
+  const owner = {}; owners.add(owner);
   let banner: HTMLDivElement | undefined;
   let bannerTimer: ReturnType<typeof setTimeout> | undefined;
   const labels: Record<Exclude<RecoveryState, 'connected'>, string> = {
@@ -233,6 +236,7 @@ export function installSessionRecovery(connection: BrowserConnection): () => voi
   window.addEventListener('online', network); window.addEventListener('offline', network);
   recovery.start();
   return () => {
+    owners.delete(owner);
     recovery.stop(); clearTimeout(bannerTimer); banner?.remove(); document.removeEventListener('visibilitychange', visible);
     window.removeEventListener('pageshow', wake); window.removeEventListener('focus', wake);
     window.removeEventListener('online', network); window.removeEventListener('offline', network);

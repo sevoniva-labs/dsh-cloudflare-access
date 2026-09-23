@@ -37,6 +37,8 @@ test('normal startup and brief reconnects stay quiet, slow connections and auth 
   const fetcher = vi.fn().mockImplementation(async () => Response.json(lease())); vi.stubGlobal('fetch', fetcher);
   s.setState(undefined);
   const dispose = installSessionRecovery(s.connection);
+  const owners = (globalThis as typeof globalThis & { __DSH_CLOUDFLARE_RECOVERY_OWNERS__: Set<object> }).__DSH_CLOUDFLARE_RECOVERY_OWNERS__;
+  expect(owners.size).toBe(1);
   const text = () => [...visible].flatMap(el => el.children.map(child => child.textContent)).join(' ');
   try {
     await vi.advanceTimersByTimeAsync(0); s.setState('connecting');
@@ -50,7 +52,7 @@ test('normal startup and brief reconnects stay quiet, slow connections and auth 
     fetcher.mockImplementation(async () => new Response('', { status: 403 }));
     s.setState('disconnected'); await vi.advanceTimersByTimeAsync(1000);
     expect(text()).toContain('当前账号无访问权限');
-    dispose(); await vi.advanceTimersByTimeAsync(120_000); expect(visible.size).toBe(0);
+    dispose(); expect(owners.size).toBe(0); await vi.advanceTimersByTimeAsync(120_000); expect(visible.size).toBe(0);
   } finally { dispose(); }
 });
 test('a genuinely slow first connection is shown after the grace period and cancels on dispose', async () => {

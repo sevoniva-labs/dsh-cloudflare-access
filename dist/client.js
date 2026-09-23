@@ -279,6 +279,10 @@ function authenticateBrowser(interactive, signal) {
   });
 }
 function installSessionRecovery(connection) {
+  const globals = globalThis;
+  const owners = globals.__DSH_CLOUDFLARE_RECOVERY_OWNERS__ ??= /* @__PURE__ */ new Set();
+  const owner = {};
+  owners.add(owner);
   let banner;
   let bannerTimer;
   const labels = {
@@ -335,6 +339,7 @@ function installSessionRecovery(connection) {
   window.addEventListener("offline", network);
   recovery.start();
   return () => {
+    owners.delete(owner);
     recovery.stop();
     clearTimeout(bannerTimer);
     banner?.remove();

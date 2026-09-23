@@ -442,6 +442,39 @@ function adaptModelsBundle(source) {
   return source.slice(0, start) + section.replace(anchor, replacement) + source.slice(end);
 }
 
+// src/web-assets.ts
+function versionedAsset(url, contentType) {
+  if (!/^(?:text\/javascript|application\/javascript|text\/css)(?:;|$)/i.test(contentType)) return false;
+  const parsed = new URL(url, "http://local.invalid");
+  if (parsed.pathname.startsWith("/assets/")) return /^\/assets\/[\w-]+-[\w-]{8,}\.(?:js|css)$/.test(parsed.pathname) && !parsed.search;
+  return /^\/plugins\/\?\?.+\/client\.js(?:&rev=[a-f0-9]{12,32})$/.test(url) && !url.includes("client.js.map");
+}
+var SETTINGS_MODULE = "@deepseek-ai/dsh-client-ui-settings-general";
+var indicator = 'state: wide && desktopUpdate.presentation?.phase !== "installing" ? connectionIndicator : void 0,';
+function settingsBundleRequest(url) {
+  try {
+    const path = decodeURIComponent(url);
+    return path.startsWith("/plugins/") && path.includes(`${SETTINGS_MODULE}/client.js`) && !path.includes("client.js.map");
+  } catch {
+    return false;
+  }
+}
+function adaptSettingsBundle(source) {
+  const marker = `id: "${SETTINGS_MODULE}"`, start = source.indexOf(marker);
+  if (start < 0 || source.indexOf(marker, start + marker.length) >= 0) return source;
+  const next = source.indexOf("window.__ModuleLoader__.load(", start), end = next < 0 ? source.length : next;
+  const section = source.slice(start, end);
+  if (section.split(indicator).length !== 2 || !section.includes("function SettingsRoot(props)")) return source;
+  const replacement = 'state: globalThis.__DSH_CLOUDFLARE_RECOVERY_OWNERS__?.size ? void 0 : (wide && desktopUpdate.presentation?.phase !== "installing" ? connectionIndicator : void 0),';
+  return source.slice(0, start) + section.replace(indicator, replacement) + source.slice(end);
+}
+function matchesEtag(header, etag) {
+  return header?.split(",").some((value) => {
+    const tag = value.trim();
+    return tag === "*" || tag.replace(/^W\//, "") === etag;
+  }) ?? false;
+}
+
 // src/gateway.ts
 function accessVerifier(d, fetcher = fetch, maxTokenAgeSeconds = 7200) {
   const issuer = `https://${authDomain(d.authDomain)}`;
@@ -586,6 +619,10 @@ var Gateway = class {
   revoked = /* @__PURE__ */ new Map();
   leaseSecret = randomBytes(32);
   timer;
+  webSockets = { active: 0, opened: 0, closed: 0, lastClose: void 0 };
+  diagnostics() {
+    return { webSockets: { ...this.webSockets, lastClose: this.webSockets.lastClose && { ...this.webSockets.lastClose } } };
+  }
   async start() {
     await new Promise((resolve, reject) => {
       this.server.once("error", reject);
@@ -691,8 +728,10 @@ var Gateway = class {
     }
     const cookie = await this.options.native.get();
     const adaptModels = req.method === "GET" && modelsBundleRequest(req.url);
+    const adaptSettings = req.method === "GET" && settingsBundleRequest(req.url);
+    const adaptScript = adaptModels || adaptSettings;
     const upstreamHeaders = this.upstreamHeaders(req, cookie);
-    if (adaptModels) {
+    if (adaptScript) {
       upstreamHeaders["accept-encoding"] = "identity";
       delete upstreamHeaders["if-none-match"];
       delete upstreamHeaders["if-modified-since"];
@@ -706,14 +745,17 @@ var Gateway = class {
         return;
       }
       const headers = clean(response.headers);
-      headers["cache-control"] = "no-store";
+      const cacheable = ["GET", "HEAD"].includes(req.method ?? "") && response.statusCode === 200 && versionedAsset(req.url, String(headers["content-type"] ?? ""));
+      headers["cache-control"] = cacheable ? modelsBundleRequest(req.url) || settingsBundleRequest(req.url) ? "private, no-cache" : "private, max-age=31536000, immutable" : "no-store";
+      headers["cdn-cache-control"] = "no-store";
+      headers["cloudflare-cdn-cache-control"] = "no-store";
       headers["referrer-policy"] = "no-referrer";
       if (headers.location && (!headers.location.startsWith("/") || headers.location.startsWith("//") || headers.location.includes("token="))) {
         response.destroy();
         json(res, 502, { error: "\u62D2\u7EDD\u4E86\u975E\u9884\u671F\u7684\u4E0A\u6E38\u91CD\u5B9A\u5411\u3002" });
         return;
       }
-      if (adaptModels && response.statusCode === 200 && !headers["content-encoding"] && String(headers["content-type"]).includes("javascript")) {
+      if (adaptScript && response.statusCode === 200 && !headers["content-encoding"] && String(headers["content-type"]).includes("javascript")) {
         const chunks = [];
         let size = 0;
         response.on("data", (chunk) => {
@@ -727,15 +769,27 @@ var Gateway = class {
         });
         response.on("end", () => {
           if (res.writableEnded) return;
-          const output = adaptModelsBundle(Buffer.concat(chunks).toString("utf8"));
+          let output = Buffer.concat(chunks).toString("utf8");
+          if (adaptModels) output = adaptModelsBundle(output);
+          if (adaptSettings) output = adaptSettingsBundle(output);
           delete headers.etag;
           delete headers["last-modified"];
           delete headers["content-length"];
+          if (cacheable) {
+            const etag = `"${createHash2("sha256").update(output).digest("hex")}"`;
+            headers.etag = etag;
+            headers["cache-control"] = "private, no-cache";
+            if (matchesEtag(req.headers["if-none-match"], etag)) {
+              res.writeHead(304, headers);
+              res.end();
+              return;
+            }
+          }
           res.writeHead(200, headers);
           res.end(output);
         });
         response.on("error", () => {
-          if (!res.headersSent) json(res, 502, { error: "\u65E0\u6CD5\u8BFB\u53D6\u6A21\u578B\u8BBE\u7F6E\u8D44\u6E90\u3002" });
+          if (!res.headersSent) json(res, 502, { error: "\u65E0\u6CD5\u8BFB\u53D6\u8BBE\u7F6E\u9875\u9762\u8D44\u6E90\u3002" });
           else res.destroy();
         });
         return;
@@ -770,6 +824,15 @@ var Gateway = class {
     const cookie = await this.options.native.get();
     const upstream = request({ agent: false, hostname: "127.0.0.1", port: this.options.native.port, path: req.url, method: "GET", headers: this.upstreamHeaders(req, cookie, true) });
     upstream.on("upgrade", (response, upstreamSocket, upstreamHead) => {
+      const started = Date.now();
+      this.webSockets.active++;
+      this.webSockets.opened++;
+      socket.once("close", () => {
+        this.webSockets.active--;
+        this.webSockets.closed++;
+        const reason = id.expires <= Date.now() ? "auth-expired" : this.revoked.has(id.fingerprint) ? "revoked" : Date.now() - (this.leases.get(id.fingerprint) ?? started) > (this.options.leaseMs ?? 9e4) ? "lease-expired" : "transport-closed";
+        this.webSockets.lastClose = { durationMs: Date.now() - started, reason };
+      });
       upstreamSocket.on("error", () => socket.destroy());
       const headers = clean(response.headers, true);
       const lines = Object.entries(headers).flatMap(([key, values]) => (Array.isArray(values) ? values : [values]).filter((v) => v !== void 0).map((v) => `${key}: ${v}`));
@@ -997,7 +1060,7 @@ var Controller = class {
   }
   status() {
     const { state } = this.store;
-    return { remote: false, phase: state.phase, enabled: state.enabled, running: !!this.gateway, connector: this.connector.status, retryAt: this.connector.retryAt, busy: this.busy, deployment: state.deployment, lastError: this.connector.lastError ?? state.lastError };
+    return { remote: false, phase: state.phase, enabled: state.enabled, running: !!this.gateway, connector: this.connector.status, retryAt: this.connector.retryAt, busy: this.busy, deployment: state.deployment, lastError: this.connector.lastError ?? state.lastError, diagnostics: this.gateway?.diagnostics() };
   }
   async execute(action, body2) {
     if (this.disposed) fail("DISPOSED", "\u63D2\u4EF6\u6B63\u5728\u505C\u6B62\u3002", 503);

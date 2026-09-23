@@ -5,6 +5,7 @@ import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, customFetch } from 'jose';
 import { PREFIX, authDomain, fail, type Deployment } from './model.ts';
 import { adaptModelsBundle, modelsBundleRequest } from './models-compat.ts';
+import { adaptSettingsBundle, matchesEtag, settingsBundleRequest, versionedAsset } from './web-assets.ts';
 
 export interface Identity { email: string; subject: string; expires: number; fingerprint: string }
 export type Verifier = (token: string) => Promise<Identity>;
@@ -104,6 +105,8 @@ export class Gateway {
   private readonly revoked = new Map<string, number>();
   private readonly leaseSecret = randomBytes(32);
   private timer?: NodeJS.Timeout;
+  private webSockets = { active: 0, opened: 0, closed: 0, lastClose: undefined as { durationMs: number; reason: string } | undefined };
+  diagnostics() { return { webSockets: { ...this.webSockets, lastClose: this.webSockets.lastClose && { ...this.webSockets.lastClose } } }; }
   constructor(private readonly options: GatewayOptions) {
     this.verify = options.verify ?? accessVerifier(options.deployment, fetch, options.maxTokenAgeSeconds);
     this.server.on('request', (req, res) => { void this.handle(req, res).catch(() => { if (!res.headersSent) json(res, 502, { error: '远程入口暂不可用，请检查本机 Harness。' }); else res.destroy(); }); });
@@ -195,17 +198,24 @@ export class Gateway {
     if (new URL(req.url!, 'http://local.invalid').searchParams.has('token')) { json(res, 400, { error: '不接受本机启动凭据。' }); return; }
     const cookie = await this.options.native.get();
     const adaptModels = req.method === 'GET' && modelsBundleRequest(req.url!);
+    const adaptSettings = req.method === 'GET' && settingsBundleRequest(req.url!);
+    const adaptScript = adaptModels || adaptSettings;
     const upstreamHeaders = this.upstreamHeaders(req, cookie);
-    if (adaptModels) {
+    if (adaptScript) {
       upstreamHeaders['accept-encoding'] = 'identity';
       delete upstreamHeaders['if-none-match']; delete upstreamHeaders['if-modified-since']; delete upstreamHeaders.range;
     }
     const upstream = request({ agent: false, hostname: '127.0.0.1', port: this.options.native.port, path: req.url, method: req.method, headers: upstreamHeaders }, response => {
       if (response.statusCode === 401) { this.options.native.reset(); response.resume(); json(res, 503, { error: '本机会话已更新，请重试。请求未被自动重放。' }); return; }
       const headers = clean(response.headers);
-      headers['cache-control'] = 'no-store'; headers['referrer-policy'] = 'no-referrer';
+      const cacheable = ['GET', 'HEAD'].includes(req.method ?? '') && response.statusCode === 200 && versionedAsset(req.url!, String(headers['content-type'] ?? ''));
+      headers['cache-control'] = cacheable ? (modelsBundleRequest(req.url!) || settingsBundleRequest(req.url!) ? 'private, no-cache' : 'private, max-age=31536000, immutable') : 'no-store';
+      // Browser-local code caching must never turn authenticated resources into
+      // shared CDN responses. HTML, credentials, RPCs and streams stay no-store.
+      headers['cdn-cache-control'] = 'no-store'; headers['cloudflare-cdn-cache-control'] = 'no-store';
+      headers['referrer-policy'] = 'no-referrer';
       if (headers.location && (!headers.location.startsWith('/') || headers.location.startsWith('//') || headers.location.includes('token='))) { response.destroy(); json(res, 502, { error: '拒绝了非预期的上游重定向。' }); return; }
-      if (adaptModels && response.statusCode === 200 && !headers['content-encoding'] && String(headers['content-type']).includes('javascript')) {
+      if (adaptScript && response.statusCode === 200 && !headers['content-encoding'] && String(headers['content-type']).includes('javascript')) {
         const chunks: Buffer[] = []; let size = 0;
         response.on('data', (chunk: Buffer) => {
           size += chunk.length;
@@ -214,11 +224,20 @@ export class Gateway {
         });
         response.on('end', () => {
           if (res.writableEnded) return;
-          const output = adaptModelsBundle(Buffer.concat(chunks).toString('utf8'));
+          let output = Buffer.concat(chunks).toString('utf8');
+          if (adaptModels) output = adaptModelsBundle(output);
+          if (adaptSettings) output = adaptSettingsBundle(output);
           delete headers.etag; delete headers['last-modified']; delete headers['content-length'];
+          // These bytes also depend on this plugin's compatibility layer, not
+          // only the official bundle revision. Revalidate after every reload.
+          if (cacheable) {
+            const etag = `"${createHash('sha256').update(output).digest('hex')}"`;
+            headers.etag = etag; headers['cache-control'] = 'private, no-cache';
+            if (matchesEtag(req.headers['if-none-match'], etag)) { res.writeHead(304, headers); res.end(); return; }
+          }
           res.writeHead(200, headers); res.end(output);
         });
-        response.on('error', () => { if (!res.headersSent) json(res, 502, { error: '无法读取模型设置资源。' }); else res.destroy(); });
+        response.on('error', () => { if (!res.headersSent) json(res, 502, { error: '无法读取设置页面资源。' }); else res.destroy(); });
         return;
       }
       res.writeHead(response.statusCode ?? 502, headers); response.pipe(res);
@@ -239,6 +258,13 @@ export class Gateway {
     const cookie = await this.options.native.get();
     const upstream = request({ agent: false, hostname: '127.0.0.1', port: this.options.native.port, path: req.url, method: 'GET', headers: this.upstreamHeaders(req, cookie, true) });
     upstream.on('upgrade', (response, upstreamSocket, upstreamHead) => {
+      const started = Date.now();
+      this.webSockets.active++; this.webSockets.opened++;
+      socket.once('close', () => {
+        this.webSockets.active--; this.webSockets.closed++;
+        const reason = id.expires <= Date.now() ? 'auth-expired' : this.revoked.has(id.fingerprint) ? 'revoked' : Date.now() - (this.leases.get(id.fingerprint) ?? started) > (this.options.leaseMs ?? 90_000) ? 'lease-expired' : 'transport-closed';
+        this.webSockets.lastClose = { durationMs: Date.now() - started, reason };
+      });
       upstreamSocket.on('error', () => socket.destroy());
       const headers = clean(response.headers, true);
       const lines = Object.entries(headers).flatMap(([key, values]) => (Array.isArray(values) ? values : [values]).filter(v => v !== undefined).map(v => `${key}: ${v}`));
