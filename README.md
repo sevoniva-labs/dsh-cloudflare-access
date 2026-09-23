@@ -3,7 +3,7 @@
 DeepSeek Harness 插件，通过 Cloudflare Access、Tunnel 和 DNS 提供远程访问。
 
 - 包名：`@sevoniva/dsh-cloudflare-access`
-- 版本：`0.1.0-alpha.3`
+- 版本：`0.1.0-alpha.4`
 - 已验证兼容：官方 DSH `0.1.6-alpha.2`、Node.js 22
 - 平台：macOS、Linux；Windows 暂不支持自动安装连接器
 
@@ -69,7 +69,11 @@ Cloudflare 账号需已完成 Zero Trust 初始化，域名需由该账号托管
 浏览器 → Cloudflare Access → Tunnel → 本机插件网关 → 官方 Harness
 ```
 
-网关校验 Access JWT、邮箱、Host 和 Origin，同时保留官方 DSH 认证，不修改官方源码或替换连接模块。HTTP、SSE 和 WebSocket 使用同一认证入口。
+网关校验 Access JWT、邮箱、Host 和 Origin，同时保留官方 DSH 认证，不修改已安装的官方文件或替换连接模块。HTTP、SSE 和 WebSocket 使用同一认证入口。
+
+通过 Access 登录的管理员可在 **设置 → 模型** 添加和编辑提供方、模型与 API Key。保存使用 Harness 原生设置和凭据服务，保留版本冲突检查；Key 不写入插件配置。
+
+DSH `0.1.6-alpha.2` 的远程模型页需要兼容适配：网关仅在已认证响应中为模型页提供主机设置视图，不改变其他设置的持久化策略或连接的 `isLoopback` 状态。未知前端结构保持原样，升级 Harness 后应复核模型编辑功能。
 
 **获准用户共享 Harness 的数据与工具权限。此插件不是多租户隔离系统，只适用于可信管理员。** 配置页面仅在本机开放，但这不是对远程管理员的权限隔离。
 

@@ -1,17 +1,42 @@
 {
   "name": "@sevoniva/dsh-cloudflare-access",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "description": "Cloudflare 零信任接入 — Access authentication and Tunnel publishing for DeepSeek Harness",
   "type": "module",
   "main": "./dist/index.js",
-  "exports": { ".": "./dist/index.js", "./client": "./dist/client.js", "./package.json": "./package.json" },
-  "files": ["dist", "src", "cordis.patch.yml", "README.md", "LICENSE", "docs"],
-  "engines": { "node": ">=22.19.0" },
+  "exports": {
+    ".": "./dist/index.js",
+    "./client": "./dist/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "docs"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/sevoniva-labs/dsh-cloudflare-access.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sevoniva-labs/dsh-cloudflare-access.git"
+  },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
-    "client": { "platform": "web", "immediately": true, "inject": ["@deepseek-ai/dsh-client-ui-settings", "@deepseek-ai/dsh-client-locale"] }
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
   },
   "scripts": {
     "build": "node scripts/build.mjs",
@@ -21,9 +46,10 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "jose": "6.2.2", "proper-lockfile": "4.1.2",
+    "@deepseek-ai/dsh-client-ui-directory-picker-browse": "0.1.6-alpha.2",
     "@deepseek-ai/dsh-host-directory-picker-browse": "0.1.6-alpha.2",
-    "@deepseek-ai/dsh-client-ui-directory-picker-browse": "0.1.6-alpha.2"
+    "jose": "6.2.2",
+    "proper-lockfile": "4.1.2"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
@@ -35,9 +61,10 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.2",
     "@deepseek-ai/dsh-client-connection": "0.1.6-alpha.2",
+    "@deepseek-ai/dsh-client-ui-settings-models": "0.1.6-alpha.2",
     "@deepseek-ai/dsh-credentials": "0.1.6-alpha.2",
-    "@deepseek-ai/dsh-host-webserver": "0.1.6-alpha.2",
     "@deepseek-ai/dsh-host-frontend-static": "0.1.6-alpha.2",
+    "@deepseek-ai/dsh-host-webserver": "0.1.6-alpha.2",
     "@deepseek-ai/schemastery": "3.18.2",
     "@types/node": "^22.20.1",
     "@types/proper-lockfile": "^4.1.4",

@@ -294,6 +294,68 @@ var Connector = class {
 import { createServer, request } from "node:http";
 import { createHash as createHash2 } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify, customFetch } from "jose";
+
+// src/models-compat.ts
+var MODELS_MODULE = "@deepseek-ai/dsh-client-ui-settings-models";
+var anchor = "new ModelsSettingsStore(ctx, schema, ctx.settingsScope.describe())";
+function modelDescribeFace(ctx) {
+  let snapshot = { status: "idle", error: null };
+  let generation = 0;
+  const listeners = /* @__PURE__ */ new Set();
+  const publish = () => {
+    for (const listener of listeners) listener();
+  };
+  return {
+    getSnapshot: () => snapshot,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    async ensure() {
+      const current = ++generation;
+      try {
+        const response = await ctx.remote.settings.describe();
+        if (current !== generation) return;
+        if (!response.ok || !response.value) throw new Error(response.error?.message ?? "\u65E0\u6CD5\u8BFB\u53D6\u6A21\u578B\u8BBE\u7F6E\u3002");
+        snapshot = { status: "ready", view: { ...response.value, hasDocument: false }, error: null };
+      } catch (error) {
+        if (current !== generation) return;
+        snapshot = { status: "idle", error: error instanceof Error ? error.message : "\u65E0\u6CD5\u8BFB\u53D6\u6A21\u578B\u8BBE\u7F6E\u3002" };
+      }
+      publish();
+    },
+    acceptView(view) {
+      ++generation;
+      if (!snapshot.view) return;
+      const namespaces = snapshot.view.namespaces;
+      snapshot = { ...snapshot, view: { ...snapshot.view, namespaces: namespaces.map((row) => row.ns === view.ns ? view : row) } };
+      publish();
+    }
+  };
+}
+function modelsBundleRequest(url) {
+  try {
+    const decoded = decodeURIComponent(url);
+    return decoded.startsWith("/plugins/") && decoded.includes(`${MODELS_MODULE}/client.js`) && !decoded.includes("client.js.map");
+  } catch {
+    return false;
+  }
+}
+function adaptModelsBundle(source) {
+  const marker = `id: "${MODELS_MODULE}"`;
+  const start = source.indexOf(marker);
+  if (start < 0 || source.indexOf(marker, start + marker.length) >= 0) return source;
+  const next = source.indexOf("window.__ModuleLoader__.load(", start);
+  const end = next < 0 ? source.length : next;
+  const section = source.slice(start, end);
+  if (section.split(anchor).length !== 2 || !section.includes("function createModelsOperations(ctx)")) return source;
+  const replacement = `new ModelsSettingsStore(ctx, schema, (${modelDescribeFace.toString()})(ctx))`;
+  return source.slice(0, start) + section.replace(anchor, replacement) + source.slice(end);
+}
+
+// src/gateway.ts
 function accessVerifier(d, fetcher = fetch) {
   const issuer = `https://${authDomain(d.authDomain)}`;
   if (!d.audience) fail("AUDIENCE", "Access audience \u7F3A\u5931\u3002");
@@ -494,7 +556,15 @@ var Gateway = class {
       return;
     }
     const cookie = await this.options.native.get();
-    const upstream = request({ agent: false, hostname: "127.0.0.1", port: this.options.native.port, path: req.url, method: req.method, headers: this.upstreamHeaders(req, cookie) }, (response) => {
+    const adaptModels = req.method === "GET" && modelsBundleRequest(req.url);
+    const upstreamHeaders = this.upstreamHeaders(req, cookie);
+    if (adaptModels) {
+      upstreamHeaders["accept-encoding"] = "identity";
+      delete upstreamHeaders["if-none-match"];
+      delete upstreamHeaders["if-modified-since"];
+      delete upstreamHeaders.range;
+    }
+    const upstream = request({ agent: false, hostname: "127.0.0.1", port: this.options.native.port, path: req.url, method: req.method, headers: upstreamHeaders }, (response) => {
       if (response.statusCode === 401) {
         this.options.native.reset();
         response.resume();
@@ -507,6 +577,33 @@ var Gateway = class {
       if (headers.location && (!headers.location.startsWith("/") || headers.location.startsWith("//") || headers.location.includes("token="))) {
         response.destroy();
         json(res, 502, { error: "\u62D2\u7EDD\u4E86\u975E\u9884\u671F\u7684\u4E0A\u6E38\u91CD\u5B9A\u5411\u3002" });
+        return;
+      }
+      if (adaptModels && response.statusCode === 200 && !headers["content-encoding"] && String(headers["content-type"]).includes("javascript")) {
+        const chunks = [];
+        let size = 0;
+        response.on("data", (chunk) => {
+          size += chunk.length;
+          if (size > 32 * 1024 * 1024) {
+            response.destroy();
+            if (!res.headersSent) json(res, 502, { error: "\u6A21\u578B\u8BBE\u7F6E\u8D44\u6E90\u8FC7\u5927\u3002" });
+            return;
+          }
+          chunks.push(chunk);
+        });
+        response.on("end", () => {
+          if (res.writableEnded) return;
+          const output = adaptModelsBundle(Buffer.concat(chunks).toString("utf8"));
+          delete headers.etag;
+          delete headers["last-modified"];
+          delete headers["content-length"];
+          res.writeHead(200, headers);
+          res.end(output);
+        });
+        response.on("error", () => {
+          if (!res.headersSent) json(res, 502, { error: "\u65E0\u6CD5\u8BFB\u53D6\u6A21\u578B\u8BBE\u7F6E\u8D44\u6E90\u3002" });
+          else res.destroy();
+        });
         return;
       }
       res.writeHead(response.statusCode ?? 502, headers);

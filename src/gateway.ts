@@ -4,6 +4,7 @@ import type { Socket } from 'node:net';
 import { createHash } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, customFetch } from 'jose';
 import { PREFIX, authDomain, fail, type Deployment } from './model.ts';
+import { adaptModelsBundle, modelsBundleRequest } from './models-compat.ts';
 
 export interface Identity { email: string; subject: string; expires: number; fingerprint: string }
 export type Verifier = (token: string) => Promise<Identity>;
@@ -157,11 +158,33 @@ export class Gateway {
     // Never forward bootstrap query parameters to the native runtime.
     if (new URL(req.url!, 'http://local.invalid').searchParams.has('token')) { json(res, 400, { error: '不接受本机启动凭据。' }); return; }
     const cookie = await this.options.native.get();
-    const upstream = request({ agent: false, hostname: '127.0.0.1', port: this.options.native.port, path: req.url, method: req.method, headers: this.upstreamHeaders(req, cookie) }, response => {
+    const adaptModels = req.method === 'GET' && modelsBundleRequest(req.url!);
+    const upstreamHeaders = this.upstreamHeaders(req, cookie);
+    if (adaptModels) {
+      upstreamHeaders['accept-encoding'] = 'identity';
+      delete upstreamHeaders['if-none-match']; delete upstreamHeaders['if-modified-since']; delete upstreamHeaders.range;
+    }
+    const upstream = request({ agent: false, hostname: '127.0.0.1', port: this.options.native.port, path: req.url, method: req.method, headers: upstreamHeaders }, response => {
       if (response.statusCode === 401) { this.options.native.reset(); response.resume(); json(res, 503, { error: '本机会话已更新，请重试。请求未被自动重放。' }); return; }
       const headers = clean(response.headers);
       headers['cache-control'] = 'no-store'; headers['referrer-policy'] = 'no-referrer';
       if (headers.location && (!headers.location.startsWith('/') || headers.location.startsWith('//') || headers.location.includes('token='))) { response.destroy(); json(res, 502, { error: '拒绝了非预期的上游重定向。' }); return; }
+      if (adaptModels && response.statusCode === 200 && !headers['content-encoding'] && String(headers['content-type']).includes('javascript')) {
+        const chunks: Buffer[] = []; let size = 0;
+        response.on('data', (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > 32 * 1024 * 1024) { response.destroy(); if (!res.headersSent) json(res, 502, { error: '模型设置资源过大。' }); return; }
+          chunks.push(chunk);
+        });
+        response.on('end', () => {
+          if (res.writableEnded) return;
+          const output = adaptModelsBundle(Buffer.concat(chunks).toString('utf8'));
+          delete headers.etag; delete headers['last-modified']; delete headers['content-length'];
+          res.writeHead(200, headers); res.end(output);
+        });
+        response.on('error', () => { if (!res.headersSent) json(res, 502, { error: '无法读取模型设置资源。' }); else res.destroy(); });
+        return;
+      }
       res.writeHead(response.statusCode ?? 502, headers); response.pipe(res);
       response.on('error', () => res.destroy());
     });

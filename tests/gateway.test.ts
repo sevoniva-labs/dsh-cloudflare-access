@@ -3,9 +3,13 @@ import { request, type IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { WebSocket, WebSocketServer } from 'ws';
 import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { Script } from 'node:vm';
 import { Gateway, NativeSession, localAdmin } from '../src/gateway.ts';
 import { PREFIX } from '../src/model.ts';
 import { deployment, nativeHarness } from './fixtures.ts';
+import { MODELS_MODULE } from '../src/models-compat.ts';
 let native: Awaited<ReturnType<typeof nativeHarness>>, gateway: Gateway, port: number;
 function http(path = '/', options: { method?: string; headers?: Record<string, string | undefined>; data?: unknown } = {}) {
   return new Promise<{ status: number; headers: IncomingHttpHeaders; text: string }>((resolve, reject) => {
@@ -22,6 +26,29 @@ beforeEach(async () => {
 });
 afterEach(async () => { await gateway?.stop(); await native?.close(); });
 describe('real official connection + protected loopback gateway', () => {
+  test('serves the native model editor with a scoped mirror only after Access authentication', async () => {
+    const source = readFileSync(createRequire(import.meta.url).resolve(`${MODELS_MODULE}/client`), 'utf8');
+    const path = `/plugins/??${MODELS_MODULE}/client.js&rev=test`;
+    let requests = 0;
+    const dispose = native.ctx.get('webServer')!.register({ kind: 'prefix', path: '/plugins', handler: (req, res) => {
+      requests++;
+      expect(req.headers['accept-encoding']).toBe('identity');
+      expect(req.headers['if-none-match']).toBeUndefined();
+      res.writeHead(200, { 'content-type': 'application/javascript', 'content-length': Buffer.byteLength(source), etag: 'original' });
+      res.end(source);
+    } });
+    try {
+      const denied = await http(path, { headers: { 'cf-access-jwt-assertion': 'bad' } });
+      expect(denied.status).toBe(403); expect(requests).toBe(0);
+      const response = await http(path, { headers: { 'accept-encoding': 'gzip', 'if-none-match': 'original' } });
+      expect(response.status).toBe(200); expect(response.headers.etag).toBeUndefined();
+      expect(response.headers['cache-control']).toBe('no-store');
+      expect(response.text).not.toContain('new ModelsSettingsStore(ctx, schema, ctx.settingsScope.describe())');
+      expect(response.text).toContain('ctx.settingsScope.bind(');
+      expect(() => new Script(response.text)).not.toThrow();
+      expect(requests).toBe(1);
+    } finally { dispose(); }
+  });
   test('bootstraps native auth without leaking token or native cookie; survives refresh', async () => {
     for (let i = 0; i < 3; i++) { const r = await http(); expect(r.status).toBe(200); expect(r.headers['set-cookie']).toBeUndefined(); expect(r.headers.location).toBeUndefined(); expect(r.text).toContain('Native Harness'); }
   });
