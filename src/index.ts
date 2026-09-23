@@ -15,8 +15,8 @@ import { StateStore } from './store.ts';
 
 export const name = 'dsh-cloudflare-access';
 export const inject = ['webServer', 'connection', 'credentials'];
-export interface Config { instance: string; gatewayPort: number; dataDir?: string; cloudflaredPath?: string }
-export const Config = z.object({ instance: z.string().default('web'), gatewayPort: z.natural().min(1024).max(65535).default(3082), dataDir: z.string(), cloudflaredPath: z.string() });
+export interface Config { instance: string; gatewayPort: number; dataDir?: string; cloudflaredPath?: string; maxTokenAgeSeconds?: number }
+export const Config = z.object({ instance: z.string().default('web'), gatewayPort: z.natural().min(1024).max(65535).default(3082), dataDir: z.string(), cloudflaredPath: z.string(), maxTokenAgeSeconds: z.natural().min(60).max(2678400).default(7200) });
 async function body(req: IncomingMessage): Promise<Record<string, unknown>> {
   if (!String(req.headers['content-type']).startsWith('application/json')) fail('CONTENT_TYPE', '需要 JSON 请求。', 415);
   let size = 0; const chunks: Buffer[] = [];
@@ -43,7 +43,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     set: value => ctx.credentials.set(ref, value),
     get: async () => (await ctx.credentials.resolve(ref))?.value,
     clear: () => ctx.credentials.unset(ref),
-  }, new NativeSession(ctx.webServer.port, base => ctx.connection.authenticatedUrl(base)), config.gatewayPort, config.cloudflaredPath);
+  }, new NativeSession(ctx.webServer.port, base => ctx.connection.authenticatedUrl(base)), config.gatewayPort, config.cloudflaredPath, config.maxTokenAgeSeconds);
   const activeController = controller;
   ctx.effect(() => () => activeController.dispose(), 'cloudflare lifecycle');
   await controller.init();

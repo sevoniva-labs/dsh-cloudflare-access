@@ -11,3 +11,9 @@ const verifier = () => accessVerifier(deployment, (async (url: unknown) => { exp
 test('verifies real RSA signature + issuer + audience + identity', async () => { expect(await verifier()(await token())).toMatchObject({ email: 'owner@example.com', subject: 'user' }); });
 test.each([{ email: 'intruder@example.com' }, { iss: 'https://evil.test' }, { aud: 'other-app' }, { type: 'org' }, { exp: 1 }, { sub: '' }, { iat: 1 }])('rejects invalid claims %j', async claims => { await expect(verifier()(await token(claims))).rejects.toThrow(); });
 test('rejects a forged signing key', async () => { const other = await generateKeyPair('RS256'); await expect(verifier()(await token({}, other.privateKey))).rejects.toThrow(); });
+test('effective stream expiry cannot outlive the configured maximum token age', async () => {
+  const iat = Math.floor(Date.now() / 1000);
+  const check = accessVerifier(deployment, async () => Response.json({ keys: [jwk] }), 3600);
+  expect((await check(await token({ iat, exp: iat + 86_400 }))).expires).toBe((iat + 3600) * 1000);
+  await expect(check(await token({ iat: iat - 3601, exp: iat + 3600 }))).rejects.toThrow();
+});

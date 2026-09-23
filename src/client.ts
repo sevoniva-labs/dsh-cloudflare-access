@@ -1,6 +1,8 @@
 import type * as React from 'react';
 import { PREFIX } from './model.ts';
+import { installSessionRecovery, type BrowserConnection } from './session-recovery.ts';
 interface ClientContext {
+  connection: BrowserConnection;
   effect(fn: () => (() => void), label?: string): void;
   inject(services: string[], fn: (ctx: ClientContext) => void): void;
   slots: { inject(name: string, fn: () => unknown): unknown; register(spec: Record<string, unknown>, render: () => React.ReactNode): unknown };
@@ -10,9 +12,10 @@ type Status = { remote: boolean; email?: string; expires?: number; phase?: strin
 type Zone = { id: string; name: string; accountId: string; accountName: string };
 type Preview = { planId: string; expires: number; authDomain: string; createOtp: boolean; setup: { hostname: string; emails: string[]; postureChecks: string[] } };
 async function api<T>(action: string, value?: unknown): Promise<T> {
-  const response = await fetch(`${PREFIX}/${action}`, { method: value === undefined ? 'GET' : 'POST', credentials: 'same-origin', redirect: 'error', headers: value === undefined ? {} : { 'content-type': 'application/json' }, body: value === undefined ? undefined : JSON.stringify(value) });
+  const response = await fetch(`${PREFIX}/${action}`, { method: value === undefined ? 'GET' : 'POST', credentials: 'same-origin', redirect: 'manual', headers: { 'X-Requested-With': 'XMLHttpRequest', ...(value === undefined ? {} : { 'content-type': 'application/json' }) }, body: value === undefined ? undefined : JSON.stringify(value) });
+  if (response.type === 'opaqueredirect' || response.status === 401) throw new Error('登录已过期，请使用页面下方的登录入口。');
   let result;
-  try { result = await response.json(); } catch { throw new Error('认证已过期或入口不可达，请重新打开页面登录。'); }
+  try { result = await response.json(); } catch { throw new Error('服务响应异常，请稍后重试。'); }
   if (!response.ok) throw new Error(result.error ?? `请求失败 (${response.status})`);
   return result as T;
 }
@@ -85,13 +88,9 @@ export function createClient(require: (name: string) => unknown) {
     );
   }
   return { name: 'dsh-cloudflare-access-client', inject: [], apply(ctx: ClientContext) {
-    // Short browser leases ensure open streams are periodically rechecked at Access.
-    if (!['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) ctx.effect(() => {
-      let stopped = false, banner: HTMLDivElement | undefined;
-      const heartbeat = async () => { try { await api('lease', {}); banner?.remove(); banner = undefined; } catch { if (stopped || banner) return; banner = document.createElement('div'); banner.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:99999;background:#27272a;color:white;padding:12px 20px;border-radius:10px;box-shadow:0 4px 24px #0005'; const button = document.createElement('button'); button.textContent = '连接中断，点击重试'; button.style.cssText = 'color:inherit;background:none;border:0;cursor:pointer'; button.onclick = () => location.assign('/'); banner.append(button); document.body.append(banner); } };
-      void heartbeat(); const timer = setInterval(() => { void heartbeat(); }, 30_000);
-      return () => { stopped = true; clearInterval(timer); banner?.remove(); };
-    }, 'cloudflare session lease');
+    if (!['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) ctx.inject(['connection'], sub => {
+      sub.effect(() => installSessionRecovery(sub.connection), 'cloudflare session recovery');
+    });
     ctx.inject(['slots', 'locale'], sub => {
       sub.effect(() => sub.locale.register('dsh-cloudflare-access', { zh: { nav: 'Cloudflare 零信任接入' }, en: { nav: 'Cloudflare Zero Trust' } }), 'access locale');
       const t = sub.locale.bind('dsh-cloudflare-access');

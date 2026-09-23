@@ -27,14 +27,310 @@ module.exports = __toCommonJS(client_exports);
 // src/model.ts
 var PREFIX = "/__dsh_cloudflare_access";
 
+// src/session-recovery.ts
+var ProbeError = class extends Error {
+  constructor(kind) {
+    super(kind);
+    this.kind = kind;
+  }
+  kind;
+};
+async function probeLease(signal, fetcher = fetch) {
+  let response;
+  try {
+    response = await fetcher(`${PREFIX}/lease`, {
+      method: "POST",
+      credentials: "same-origin",
+      redirect: "manual",
+      cache: "no-store",
+      signal,
+      headers: { "content-type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+      body: "{}"
+    });
+  } catch {
+    throw new ProbeError("network");
+  }
+  if (response.type === "opaqueredirect" || response.status === 401) throw new ProbeError("login");
+  if (response.status === 403) throw new ProbeError("denied");
+  if (!response.ok) throw new ProbeError("unavailable");
+  let value;
+  try {
+    value = await response.json();
+  } catch {
+    throw new ProbeError("unavailable");
+  }
+  if (value.ok !== true || typeof value.sessionId !== "string" || !value.sessionId || typeof value.principal !== "string" || !value.principal || !Number.isFinite(value.expires) || !Number.isFinite(value.leaseMs) || value.leaseMs < 1e3) throw new ProbeError("unavailable");
+  return value;
+}
+var SessionRecovery = class {
+  constructor(options) {
+    this.options = options;
+    this.now = options.now ?? Date.now;
+  }
+  options;
+  stopped = false;
+  pending;
+  queued = false;
+  timer;
+  probeAbort;
+  authAbort;
+  unsubscribe;
+  lease;
+  failedSince;
+  silentAttempted = false;
+  needsReconnect = false;
+  lastReconnect = -Infinity;
+  lastSuccess = -Infinity;
+  state;
+  now;
+  start() {
+    this.unsubscribe = this.options.connection.state.subscribe(() => {
+      if (this.stopped) return;
+      if (this.options.connection.state.getSnapshot() === "connected" && this.failedSince === void 0 && this.lease) this.show("connected");
+      else if (this.options.connection.state.getSnapshot() !== "connected") {
+        this.needsReconnect = true;
+        this.schedule(1e3);
+      }
+    });
+    void this.check();
+  }
+  stop() {
+    this.stopped = true;
+    clearTimeout(this.timer);
+    this.probeAbort?.abort();
+    this.authAbort?.abort();
+    this.unsubscribe?.();
+  }
+  wake() {
+    if (this.stopped || this.state === "account-changed") return;
+    this.needsReconnect = this.needsReconnect || this.options.connection.state.getSnapshot() !== "connected" || this.lease !== void 0 && this.now() - this.lastSuccess > this.lease.leaseMs / 2;
+    void this.check();
+  }
+  networkChanged() {
+    if (this.options.online?.() === false) {
+      this.probeAbort?.abort();
+      this.authAbort?.abort();
+      this.needsReconnect = true;
+      this.show("offline");
+    } else this.wake();
+  }
+  /** Must be called directly from a user gesture so a login window is allowed. */
+  login() {
+    if (this.stopped || this.state === "account-changed") return;
+    this.authAbort?.abort();
+    const abort = this.authAbort = new AbortController();
+    const result = this.options.authenticate(true, abort.signal);
+    void result.then(() => {
+      if (!abort.signal.aborted && !this.stopped) {
+        this.needsReconnect = true;
+        void this.check();
+      }
+    }, () => {
+    }).finally(() => {
+      if (this.authAbort === abort) this.authAbort = void 0;
+    });
+  }
+  check() {
+    if (this.stopped || this.state === "account-changed") return Promise.resolve();
+    if (this.pending) {
+      this.queued = true;
+      return this.pending;
+    }
+    clearTimeout(this.timer);
+    this.pending = this.run().finally(() => {
+      this.pending = void 0;
+      if (this.queued) {
+        this.queued = false;
+        if (!this.stopped) this.schedule(0);
+      }
+    });
+    return this.pending;
+  }
+  show(state) {
+    if (!this.stopped && this.state !== state) {
+      this.state = state;
+      this.options.render(state);
+    }
+  }
+  schedule(delay) {
+    if (this.stopped || this.state === "account-changed") return;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      void this.check();
+    }, delay);
+  }
+  async run() {
+    if (this.options.online?.() === false) {
+      this.show("offline");
+      this.schedule(3e4);
+      return;
+    }
+    const abort = this.probeAbort = new AbortController();
+    const timeout = setTimeout(() => abort.abort(), 8e3);
+    try {
+      const lease = await this.options.probe(abort.signal);
+      if (this.stopped) return;
+      if (this.lease && lease.principal !== this.lease.principal) {
+        this.show("account-changed");
+        return;
+      }
+      const recovered = this.failedSince !== void 0;
+      const changed = this.lease !== void 0 && this.lease.sessionId !== lease.sessionId;
+      this.lease = lease;
+      this.lastSuccess = this.now();
+      this.failedSince = void 0;
+      this.silentAttempted = false;
+      this.authAbort?.abort();
+      this.authAbort = void 0;
+      this.needsReconnect ||= changed || recovered;
+      if (this.needsReconnect && this.now() - this.lastReconnect >= 3e3) {
+        this.needsReconnect = false;
+        this.lastReconnect = this.now();
+        this.options.connection.reconnect();
+      }
+      this.show(this.options.connection.state.getSnapshot() === "connected" ? "connected" : "recovering");
+      const expiryDelay = lease.expires - this.now() + 250;
+      this.schedule(Math.max(1e3, Math.min(this.needsReconnect ? 3e3 : 3e4, lease.leaseMs / 3, expiryDelay)));
+    } catch (error) {
+      if (this.stopped) return;
+      this.failedSince ??= this.now();
+      this.needsReconnect = true;
+      const kind = error instanceof ProbeError ? error.kind : "network";
+      if (this.options.online?.() === false) this.show("offline");
+      else if (kind === "denied") this.show("denied");
+      else if (kind === "login") {
+        if (!this.silentAttempted && !this.authAbort) {
+          this.silentAttempted = true;
+          this.show("recovering");
+          const auth = this.authAbort = new AbortController();
+          try {
+            await this.options.authenticate(false, auth.signal);
+            if (!this.stopped && !auth.signal.aborted) this.queued = true;
+          } catch {
+            if (!this.stopped && !auth.signal.aborted) this.show("login");
+          } finally {
+            if (this.authAbort === auth) this.authAbort = void 0;
+          }
+        } else this.show("login");
+      } else if (this.now() - this.failedSince >= 5e3) this.show(kind === "unavailable" ? "unavailable" : "recovering");
+      this.schedule(kind === "login" || kind === "denied" ? 3e4 : 5e3);
+    } finally {
+      clearTimeout(timeout);
+      if (this.probeAbort === abort) this.probeAbort = void 0;
+    }
+  }
+};
+var AUTH_MESSAGE = "dsh-cloudflare-access:authenticated";
+function authenticateBrowser(interactive, signal) {
+  const state = crypto.randomUUID();
+  const url = `${PREFIX}/auth/complete?state=${encodeURIComponent(state)}`;
+  return new Promise((resolve, reject) => {
+    let frame;
+    let channel;
+    let timer;
+    const finish = (ok) => {
+      clearTimeout(timer);
+      frame?.remove();
+      channel?.close();
+      window.removeEventListener("message", message);
+      signal.removeEventListener("abort", aborted);
+      ok ? resolve() : reject(new Error("Authentication requires interaction"));
+    };
+    const aborted = () => finish(false);
+    const message = (event) => {
+      if (frame && event.origin === location.origin && event.source === frame.contentWindow && event.data?.type === AUTH_MESSAGE && event.data?.state === state) finish(true);
+    };
+    if (signal.aborted) {
+      reject(new Error("aborted"));
+      return;
+    }
+    signal.addEventListener("abort", aborted, { once: true });
+    timer = setTimeout(() => finish(false), interactive ? 3e5 : 8e3);
+    if (interactive) {
+      if (typeof BroadcastChannel !== "undefined") {
+        channel = new BroadcastChannel(AUTH_MESSAGE);
+        channel.onmessage = (event) => {
+          if (event.data?.state === state && event.data?.type === AUTH_MESSAGE) finish(true);
+        };
+      }
+      window.open(url, "_blank", "noopener");
+    } else {
+      frame = document.createElement("iframe");
+      frame.hidden = true;
+      frame.title = "\u767B\u5F55\u72B6\u6001\u68C0\u67E5";
+      frame.referrerPolicy = "no-referrer";
+      window.addEventListener("message", message);
+      frame.src = url;
+      document.body.append(frame);
+    }
+  });
+}
+function installSessionRecovery(connection) {
+  let banner;
+  const labels = {
+    recovering: "\u6B63\u5728\u6062\u590D\u8FDE\u63A5\u2026",
+    offline: "\u7F51\u7EDC\u5DF2\u65AD\u5F00\uFF0C\u6062\u590D\u540E\u81EA\u52A8\u8FDE\u63A5\u3002",
+    login: "\u767B\u5F55\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u91CD\u65B0\u767B\u5F55\u3002",
+    denied: "\u5F53\u524D\u8D26\u53F7\u65E0\u8BBF\u95EE\u6743\u9650\u3002",
+    unavailable: "\u670D\u52A1\u6682\u4E0D\u53EF\u7528\uFF0C\u6B63\u5728\u91CD\u8BD5\u3002",
+    "account-changed": "\u767B\u5F55\u8D26\u53F7\u5DF2\u66F4\u6362\uFF0C\u8BF7\u4FDD\u5B58\u8349\u7A3F\u540E\u91CD\u65B0\u6253\u5F00\u9875\u9762\u3002"
+  };
+  const recovery = new SessionRecovery({
+    connection,
+    probe: probeLease,
+    authenticate: authenticateBrowser,
+    online: () => navigator.onLine,
+    render: (state) => {
+      banner?.remove();
+      banner = void 0;
+      if (state === "connected") return;
+      banner = document.createElement("div");
+      banner.setAttribute("role", "status");
+      banner.style.cssText = "position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:99999;background:#27272a;color:white;padding:12px 20px;border-radius:8px;box-shadow:0 4px 24px #0005;display:flex;align-items:center;gap:12px";
+      const text = document.createElement("span");
+      text.textContent = labels[state];
+      banner.append(text);
+      if (state !== "account-changed" && state !== "offline") {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = state === "login" ? "\u767B\u5F55" : "\u91CD\u8BD5";
+        button.style.cssText = "color:inherit;background:none;border:1px solid #888;border-radius:4px;padding:4px 10px;cursor:pointer";
+        button.onclick = () => state === "login" ? recovery.login() : recovery.wake();
+        banner.append(button);
+      }
+      document.body.append(banner);
+    }
+  });
+  const visible = () => {
+    if (document.visibilityState === "visible") recovery.wake();
+  };
+  const wake = () => recovery.wake(), network = () => recovery.networkChanged();
+  document.addEventListener("visibilitychange", visible);
+  window.addEventListener("pageshow", wake);
+  window.addEventListener("focus", wake);
+  window.addEventListener("online", network);
+  window.addEventListener("offline", network);
+  recovery.start();
+  return () => {
+    recovery.stop();
+    banner?.remove();
+    document.removeEventListener("visibilitychange", visible);
+    window.removeEventListener("pageshow", wake);
+    window.removeEventListener("focus", wake);
+    window.removeEventListener("online", network);
+    window.removeEventListener("offline", network);
+  };
+}
+
 // src/client.ts
 async function api(action, value) {
-  const response = await fetch(`${PREFIX}/${action}`, { method: value === void 0 ? "GET" : "POST", credentials: "same-origin", redirect: "error", headers: value === void 0 ? {} : { "content-type": "application/json" }, body: value === void 0 ? void 0 : JSON.stringify(value) });
+  const response = await fetch(`${PREFIX}/${action}`, { method: value === void 0 ? "GET" : "POST", credentials: "same-origin", redirect: "manual", headers: { "X-Requested-With": "XMLHttpRequest", ...value === void 0 ? {} : { "content-type": "application/json" } }, body: value === void 0 ? void 0 : JSON.stringify(value) });
+  if (response.type === "opaqueredirect" || response.status === 401) throw new Error("\u767B\u5F55\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u4F7F\u7528\u9875\u9762\u4E0B\u65B9\u7684\u767B\u5F55\u5165\u53E3\u3002");
   let result;
   try {
     result = await response.json();
   } catch {
-    throw new Error("\u8BA4\u8BC1\u5DF2\u8FC7\u671F\u6216\u5165\u53E3\u4E0D\u53EF\u8FBE\uFF0C\u8BF7\u91CD\u65B0\u6253\u5F00\u9875\u9762\u767B\u5F55\u3002");
+    throw new Error("\u670D\u52A1\u54CD\u5E94\u5F02\u5E38\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002");
   }
   if (!response.ok) throw new Error(result.error ?? `\u8BF7\u6C42\u5931\u8D25 (${response.status})`);
   return result;
@@ -202,35 +498,9 @@ function createClient(require2) {
     );
   }
   return { name: "dsh-cloudflare-access-client", inject: [], apply(ctx) {
-    if (!["localhost", "127.0.0.1", "[::1]"].includes(location.hostname)) ctx.effect(() => {
-      let stopped = false, banner;
-      const heartbeat = async () => {
-        try {
-          await api("lease", {});
-          banner?.remove();
-          banner = void 0;
-        } catch {
-          if (stopped || banner) return;
-          banner = document.createElement("div");
-          banner.style.cssText = "position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:99999;background:#27272a;color:white;padding:12px 20px;border-radius:10px;box-shadow:0 4px 24px #0005";
-          const button = document.createElement("button");
-          button.textContent = "\u8FDE\u63A5\u4E2D\u65AD\uFF0C\u70B9\u51FB\u91CD\u8BD5";
-          button.style.cssText = "color:inherit;background:none;border:0;cursor:pointer";
-          button.onclick = () => location.assign("/");
-          banner.append(button);
-          document.body.append(banner);
-        }
-      };
-      void heartbeat();
-      const timer = setInterval(() => {
-        void heartbeat();
-      }, 3e4);
-      return () => {
-        stopped = true;
-        clearInterval(timer);
-        banner?.remove();
-      };
-    }, "cloudflare session lease");
+    if (!["localhost", "127.0.0.1", "[::1]"].includes(location.hostname)) ctx.inject(["connection"], (sub) => {
+      sub.effect(() => installSessionRecovery(sub.connection), "cloudflare session recovery");
+    });
     ctx.inject(["slots", "locale"], (sub) => {
       sub.effect(() => sub.locale.register("dsh-cloudflare-access", { zh: { nav: "Cloudflare \u96F6\u4FE1\u4EFB\u63A5\u5165" }, en: { nav: "Cloudflare Zero Trust" } }), "access locale");
       const t = sub.locale.bind("dsh-cloudflare-access");

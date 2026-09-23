@@ -3,7 +3,7 @@
 DeepSeek Harness 插件，通过 Cloudflare Access、Tunnel 和 DNS 提供远程访问。
 
 - 包名：`@sevoniva/dsh-cloudflare-access`
-- 版本：`0.1.0-alpha.4`
+- 版本：`0.1.0-alpha.5`
 - 已验证兼容：官方 DSH `0.1.6-alpha.2`、Node.js 22
 - 平台：macOS、Linux；Windows 暂不支持自动安装连接器
 
@@ -53,6 +53,7 @@ Cloudflare 账号需已完成 Zero Trust 初始化，域名需由该账号托管
   config:
     instance: web
     gatewayPort: 3082
+    # maxTokenAgeSeconds: 7200
     # cloudflaredPath: /absolute/path/to/cloudflared
     # dataDir: /absolute/path/to/private/state
 ```
@@ -81,6 +82,14 @@ DSH `0.1.6-alpha.2` 的远程模型页需要兼容适配：网关仅在已认证
 
 长连接受 JWT 有效期及 90 秒浏览器租约限制。撤权仍受 Cloudflare 会话和策略传播影响，不保证即时断开。详情见 [安全说明](docs/security.md)。
 
+## 浏览器会话恢复
+
+网络恢复、标签页重新激活和认证凭据更新后，插件检查访问状态并调用 Harness 原生重连。不会重新加载任务页面或重发执行指令。
+
+应用凭据过期时，先尝试复用 Cloudflare 登录。浏览器限制第三方 Cookie、认证页面禁止嵌入，或全局登录已到期时，需要点击“登录”，在新窗口完成认证后返回原页面。原页面保留输入草稿；弹窗受限时需允许本站打开登录窗口。
+
+Access 应用默认会话为 1 小时。源站额外限制凭据年龄，`maxTokenAgeSeconds` 默认 7200 秒；长连接按 JWT 到期与年龄上限中较早的时间关闭。若管理员修改 Access 会话时长，应同时复核此上限。插件更新不会修改已有云端策略，也不会自动延长登录时间。
+
 ## 停用、删除与更新
 
 - **停用**：关闭本机入口和连接器，保留云端配置。
@@ -106,6 +115,7 @@ npm pack
 | 文件 | 职责 |
 | --- | --- |
 | `src/client.ts` | 设置页面 |
+| `src/session-recovery.ts` | 浏览器认证恢复与原生重连协调 |
 | `src/gateway.ts` | 身份校验与 HTTP/SSE/WS 代理 |
 | `src/provision.ts` | Cloudflare 资源创建、恢复与清理 |
 | `src/controller.ts` | 操作串行化与运行状态 |

@@ -16,7 +16,7 @@ export class Controller {
   private busy = false;
   private disposed = false;
   private current?: Promise<unknown>;
-  constructor(readonly store: StateStore, readonly vault: Vault, readonly native: NativeSession, gatewayPort: number, cloudflaredPath?: string) {
+  constructor(readonly store: StateStore, readonly vault: Vault, readonly native: NativeSession, gatewayPort: number, cloudflaredPath?: string, private readonly maxTokenAgeSeconds = 7200) {
     this.provisioner = new Provisioner(store, vault, gatewayPort);
     this.connector = new Connector(store.directory, cloudflaredPath, () => { void this.gateway?.stop(); this.gateway = undefined; });
   }
@@ -76,7 +76,7 @@ export class Controller {
     const d = this.store.state.deployment;
     if (this.store.state.phase !== 'configured' || !d?.dnsId || !d.audience) fail('NOT_CONFIGURED', '请先完成部署配置。');
     const token = await this.vault.get(); if (!token) fail('CREDENTIAL', 'Tunnel 运行凭据丢失，请使用原配置重新预览并恢复。');
-    const gateway = new Gateway({ deployment: d, native: this.native });
+    const gateway = new Gateway({ deployment: d, native: this.native, maxTokenAgeSeconds: this.maxTokenAgeSeconds });
     try {
       await gateway.start(); this.gateway = gateway;
       await this.connector.start(token);

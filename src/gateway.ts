@@ -1,22 +1,47 @@
 import { createServer, request, type IncomingMessage, type ServerResponse, type IncomingHttpHeaders } from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { Socket } from 'node:net';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, customFetch } from 'jose';
 import { PREFIX, authDomain, fail, type Deployment } from './model.ts';
 import { adaptModelsBundle, modelsBundleRequest } from './models-compat.ts';
 
 export interface Identity { email: string; subject: string; expires: number; fingerprint: string }
 export type Verifier = (token: string) => Promise<Identity>;
-export function accessVerifier(d: Deployment, fetcher: typeof fetch = fetch): Verifier {
+export function accessVerifier(d: Deployment, fetcher: typeof fetch = fetch, maxTokenAgeSeconds = 7200): Verifier {
   const issuer = `https://${authDomain(d.authDomain)}`;
   if (!d.audience) fail('AUDIENCE', 'Access audience 缺失。');
-  const keys = createRemoteJWKSet(new URL(`${issuer}/cdn-cgi/access/certs`), { timeoutDuration: 5000, [customFetch]: fetcher });
+  const keys = createRemoteJWKSet(new URL(`${issuer}/cdn-cgi/access/certs`), { timeoutDuration: 5000, [customFetch]: async (...args) => {
+    try { return await fetcher(...args); } catch { throw new AuthUnavailable(); }
+  } });
   return async token => {
-    const { payload } = await jwtVerify(token, keys, { issuer, audience: d.audience, algorithms: ['RS256'], requiredClaims: ['exp', 'sub', 'email', 'iat'], maxTokenAge: '2h' });
+    const { payload } = await jwtVerify(token, keys, { issuer, audience: d.audience, algorithms: ['RS256'], requiredClaims: ['exp', 'sub', 'email', 'iat'], maxTokenAge: maxTokenAgeSeconds });
     if (payload.type !== 'app' || typeof payload.email !== 'string' || !d.emails.includes(payload.email.toLowerCase()) || !payload.sub || !payload.exp) throw new Error('identity');
-    return { email: payload.email.toLowerCase(), subject: payload.sub, expires: payload.exp * 1000, fingerprint: createHash('sha256').update(token).digest('hex') };
+    return { email: payload.email.toLowerCase(), subject: payload.sub, expires: Math.min(payload.exp, payload.iat! + maxTokenAgeSeconds) * 1000, fingerprint: createHash('sha256').update(token).digest('hex') };
   };
+}
+class AuthUnavailable extends Error {}
+class AuthExpired extends Error {}
+
+function authenticationFailure(error: unknown): { status: number; code: string; error: string } {
+  const code = (error as { code?: string })?.code;
+  if (error instanceof AuthUnavailable || code === 'ERR_JWKS_TIMEOUT' || code === 'ERR_JWKS_INVALID' || code === 'ERR_JOSE_GENERIC') return { status: 503, code: 'AUTH_UNAVAILABLE', error: '认证服务暂不可用，请稍后重试。' };
+  if (error instanceof AuthExpired || code === 'ERR_JWT_EXPIRED') return { status: 401, code: 'AUTH_REQUIRED', error: '登录已过期，请重新登录。' };
+  return { status: 403, code: 'ACCESS_DENIED', error: '当前请求未通过访问验证。' };
+}
+
+/** This page is protected by the same Access policy and origin JWT checks. */
+function authenticationComplete(req: IncomingMessage, res: ServerResponse): void {
+  const state = new URL(req.url!, 'http://local.invalid').searchParams.get('state');
+  if (!state || !/^[A-Za-z0-9_-]{16,128}$/.test(state)) { json(res, 400, { code: 'INVALID_STATE', error: '登录请求无效，请从原页面重试。' }); return; }
+  const nonce = randomBytes(18).toString('base64');
+  const message = JSON.stringify({ type: 'dsh-cloudflare-access:authenticated', state });
+  res.writeHead(200, {
+    'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer',
+    'x-content-type-options': 'nosniff', 'x-frame-options': 'SAMEORIGIN',
+    'content-security-policy': `default-src 'none'; script-src 'nonce-${nonce}'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'`,
+  });
+  res.end(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>登录完成</title><p>登录完成，可以关闭此窗口返回 Harness。</p><script nonce="${nonce}">const message=${message};if(parent!==window){parent.postMessage(message,location.origin)}else{if(typeof BroadcastChannel!=="undefined"){const channel=new BroadcastChannel(message.type);channel.postMessage(message);setTimeout(()=>channel.close(),100)}setTimeout(()=>window.close(),300)}</script></html>`);
 }
 export function json(res: ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' });
@@ -68,7 +93,7 @@ function clean(headers: IncomingHttpHeaders, websocket = false): IncomingHttpHea
   if (websocket) { result.connection = 'Upgrade'; result.upgrade = 'websocket'; }
   return result;
 }
-export interface GatewayOptions { deployment: Deployment; native: NativeSession; verify?: Verifier; leaseMs?: number }
+export interface GatewayOptions { deployment: Deployment; native: NativeSession; verify?: Verifier; leaseMs?: number; maxTokenAgeSeconds?: number }
 /** Loopback-only origin: ALL HTTP and WS traffic is independently authenticated. */
 export class Gateway {
   readonly server = createServer();
@@ -77,9 +102,10 @@ export class Gateway {
   private readonly active = new Map<Duplex, { identity: Identity; since: number }>();
   private readonly leases = new Map<string, number>();
   private readonly revoked = new Map<string, number>();
+  private readonly leaseSecret = randomBytes(32);
   private timer?: NodeJS.Timeout;
   constructor(private readonly options: GatewayOptions) {
-    this.verify = options.verify ?? accessVerifier(options.deployment);
+    this.verify = options.verify ?? accessVerifier(options.deployment, fetch, options.maxTokenAgeSeconds);
     this.server.on('request', (req, res) => { void this.handle(req, res).catch(() => { if (!res.headersSent) json(res, 502, { error: '远程入口暂不可用，请检查本机 Harness。' }); else res.destroy(); }); });
     this.server.on('upgrade', (req, socket, head) => { void this.upgrade(req, socket, head).catch(() => socket.destroy()); });
     this.server.on('connection', socket => { this.sockets.add(socket); socket.once('close', () => this.sockets.delete(socket)); });
@@ -120,7 +146,8 @@ export class Gateway {
     const assertion = req.headers['cf-access-jwt-assertion'];
     if (typeof assertion !== 'string' || assertion.length > 16384) throw new Error('assertion');
     const id = await this.verify(assertion);
-    if (id.expires <= Date.now() || this.revoked.has(id.fingerprint)) throw new Error('expired');
+    if (id.expires <= Date.now()) throw new AuthExpired();
+    if (this.revoked.has(id.fingerprint)) throw new Error('revoked');
     return id;
   }
   private path(req: IncomingMessage): string {
@@ -137,18 +164,27 @@ export class Gateway {
   }
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     let id: Identity;
-    try { id = await this.identity(req); } catch {
+    try { id = await this.identity(req); } catch (error) {
+      const failure = authenticationFailure(error);
       if (req.method === 'GET' && req.headers['sec-fetch-mode'] === 'navigate' && req.headers['sec-fetch-dest'] === 'document') {
         // A stale Access cookie must not trap the browser on an unexplained JSON error.
         // Keep 403 and require an explicit login action; never auto-redirect in a loop.
-        res.writeHead(403, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'" });
+        res.writeHead(failure.status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'" });
         res.end('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>请重新登录</title><style>body{font:16px/1.7 system-ui,sans-serif;max-width:440px;margin:15vh auto;padding:24px;color:#27272a}h1{font-size:24px}a{display:inline-block;color:#fff;background:#27272a;border-radius:6px;padding:8px 18px;text-decoration:none}</style><h1>请重新登录</h1><p>当前认证无效或已过期。退出后，重新打开此地址登录。</p><a href="/cdn-cgi/access/logout">退出当前登录</a></html>');
-      } else json(res, 403, { error: '需要有效的 Cloudflare Access 认证。' });
+      } else json(res, failure.status, { code: failure.code, error: failure.error });
       return;
     }
     const path = this.path(req);
+    if (path === `${PREFIX}/auth/complete` && req.method === 'GET') { authenticationComplete(req, res); return; }
     if (path === `${PREFIX}/session` && req.method === 'GET') { json(res, 200, { remote: true, email: id.email, expires: id.expires, deviceChecks: this.options.deployment.postureChecks.length }); return; }
-    if (path === `${PREFIX}/lease` && req.method === 'POST') { this.leases.set(id.fingerprint, Date.now()); json(res, 200, { ok: true }); return; }
+    if (path === `${PREFIX}/lease` && req.method === 'POST') {
+      this.leases.set(id.fingerprint, Date.now());
+      json(res, 200, {
+        ok: true, sessionId: createHmac('sha256', this.leaseSecret).update(id.fingerprint).digest('hex'),
+        principal: createHash('sha256').update(`${this.options.deployment.audience}:${id.subject}`).digest('hex'),
+        expires: id.expires, leaseMs: this.options.leaseMs ?? 90_000,
+      }); return;
+    }
     if (path === `${PREFIX}/logout` && req.method === 'POST') {
       this.revoked.set(id.fingerprint, id.expires);
       for (const [socket, entry] of this.active) if (entry.identity.fingerprint === id.fingerprint) socket.destroy();

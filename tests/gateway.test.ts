@@ -26,6 +26,42 @@ beforeEach(async () => {
 });
 afterEach(async () => { await gateway?.stop(); await native?.close(); });
 describe('real official connection + protected loopback gateway', () => {
+  test('lease returns opaque rotation metadata without bearer or identity claims', async () => {
+    const call = () => http(`${PREFIX}/lease`, { method: 'POST', headers: { origin: `https://${deployment.hostname}` } });
+    const a = await call(), b = await call();
+    expect(a.status).toBe(200); const value = JSON.parse(a.text);
+    expect(value).toMatchObject({ ok: true, leaseMs: 1100 });
+    expect(value.sessionId).toMatch(/^[a-f0-9]{64}$/); expect(value.principal).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.parse(b.text).sessionId).toBe(value.sessionId);
+    expect(a.text).not.toContain('owner@example.com'); expect(a.text).not.toContain('valid');
+    expect((await http(`${PREFIX}/lease`, { method: 'POST' })).status).toBe(403);
+  });
+  test('auth callback stays protected, constrains framing and rejects script/redirect injection', async () => {
+    const path = `${PREFIX}/auth/complete?state=01234567-89ab-cdef-0123-456789abcdef`;
+    const denied = await http(path, { headers: { 'cf-access-jwt-assertion': 'bad' } });
+    expect(denied.status).toBe(403);
+    const r = await http(path); expect(r.status).toBe(200);
+    expect(r.headers['content-security-policy']).toContain("frame-ancestors 'self'");
+    expect(r.headers['content-security-policy']).toContain("script-src 'nonce-");
+    expect(r.headers['x-frame-options']).toBe('SAMEORIGIN'); expect(r.headers['cache-control']).toBe('no-store');
+    expect(r.text).toContain('parent.postMessage(message,location.origin)');
+    expect(r.text).not.toContain('owner@example.com'); expect(r.headers.location).toBeUndefined();
+    expect((await http(`${PREFIX}/auth/complete?state=${encodeURIComponent('</script>')}`)).status).toBe(400);
+    expect((await http(`${PREFIX}/auth/complete?state=https://evil.example`)).status).toBe(400);
+  });
+  test('expired auth is distinguishable from denied auth and unavailable verification', async () => {
+    const original = (gateway as unknown as { verify: unknown }).verify;
+    for (const [error, status, code] of [
+      [Object.assign(new Error(), { code: 'ERR_JWT_EXPIRED' }), 401, 'AUTH_REQUIRED'],
+      [Object.assign(new Error(), { code: 'ERR_JWKS_TIMEOUT' }), 503, 'AUTH_UNAVAILABLE'],
+      [new Error('invalid'), 403, 'ACCESS_DENIED'],
+    ] as const) {
+      (gateway as unknown as { verify: unknown }).verify = async () => { throw error; };
+      const r = await http(`${PREFIX}/lease`, { method: 'POST', headers: { origin: `https://${deployment.hostname}` } });
+      expect(r.status).toBe(status); expect(JSON.parse(r.text).code).toBe(code);
+    }
+    (gateway as unknown as { verify: unknown }).verify = original;
+  });
   test('serves the native model editor with a scoped mirror only after Access authentication', async () => {
     const source = readFileSync(createRequire(import.meta.url).resolve(`${MODELS_MODULE}/client`), 'utf8');
     const path = `/plugins/??${MODELS_MODULE}/client.js&rev=test`;

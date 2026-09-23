@@ -1,6 +1,6 @@
 {
   "name": "@sevoniva/dsh-cloudflare-access",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
   "description": "Cloudflare 零信任接入 — Access authentication and Tunnel publishing for DeepSeek Harness",
   "type": "module",
   "main": "./dist/index.js",
@@ -33,6 +33,7 @@
       "platform": "web",
       "immediately": true,
       "inject": [
+        "@deepseek-ai/dsh-client-connection",
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-locale"
       ]
@@ -42,6 +43,7 @@
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:browser": "node --experimental-transform-types scripts/test-session-browser.mjs",
     "check": "npm run typecheck && npm test && npm run build",
     "prepack": "npm run build"
   },

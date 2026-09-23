@@ -292,7 +292,7 @@ var Connector = class {
 
 // src/gateway.ts
 import { createServer, request } from "node:http";
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash2, createHmac, randomBytes } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify, customFetch } from "jose";
 
 // src/models-compat.ts
@@ -356,15 +356,49 @@ function adaptModelsBundle(source) {
 }
 
 // src/gateway.ts
-function accessVerifier(d, fetcher = fetch) {
+function accessVerifier(d, fetcher = fetch, maxTokenAgeSeconds = 7200) {
   const issuer = `https://${authDomain(d.authDomain)}`;
   if (!d.audience) fail("AUDIENCE", "Access audience \u7F3A\u5931\u3002");
-  const keys = createRemoteJWKSet(new URL(`${issuer}/cdn-cgi/access/certs`), { timeoutDuration: 5e3, [customFetch]: fetcher });
+  const keys = createRemoteJWKSet(new URL(`${issuer}/cdn-cgi/access/certs`), { timeoutDuration: 5e3, [customFetch]: async (...args) => {
+    try {
+      return await fetcher(...args);
+    } catch {
+      throw new AuthUnavailable();
+    }
+  } });
   return async (token) => {
-    const { payload } = await jwtVerify(token, keys, { issuer, audience: d.audience, algorithms: ["RS256"], requiredClaims: ["exp", "sub", "email", "iat"], maxTokenAge: "2h" });
+    const { payload } = await jwtVerify(token, keys, { issuer, audience: d.audience, algorithms: ["RS256"], requiredClaims: ["exp", "sub", "email", "iat"], maxTokenAge: maxTokenAgeSeconds });
     if (payload.type !== "app" || typeof payload.email !== "string" || !d.emails.includes(payload.email.toLowerCase()) || !payload.sub || !payload.exp) throw new Error("identity");
-    return { email: payload.email.toLowerCase(), subject: payload.sub, expires: payload.exp * 1e3, fingerprint: createHash2("sha256").update(token).digest("hex") };
+    return { email: payload.email.toLowerCase(), subject: payload.sub, expires: Math.min(payload.exp, payload.iat + maxTokenAgeSeconds) * 1e3, fingerprint: createHash2("sha256").update(token).digest("hex") };
   };
+}
+var AuthUnavailable = class extends Error {
+};
+var AuthExpired = class extends Error {
+};
+function authenticationFailure(error) {
+  const code = error?.code;
+  if (error instanceof AuthUnavailable || code === "ERR_JWKS_TIMEOUT" || code === "ERR_JWKS_INVALID" || code === "ERR_JOSE_GENERIC") return { status: 503, code: "AUTH_UNAVAILABLE", error: "\u8BA4\u8BC1\u670D\u52A1\u6682\u4E0D\u53EF\u7528\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002" };
+  if (error instanceof AuthExpired || code === "ERR_JWT_EXPIRED") return { status: 401, code: "AUTH_REQUIRED", error: "\u767B\u5F55\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u91CD\u65B0\u767B\u5F55\u3002" };
+  return { status: 403, code: "ACCESS_DENIED", error: "\u5F53\u524D\u8BF7\u6C42\u672A\u901A\u8FC7\u8BBF\u95EE\u9A8C\u8BC1\u3002" };
+}
+function authenticationComplete(req, res) {
+  const state = new URL(req.url, "http://local.invalid").searchParams.get("state");
+  if (!state || !/^[A-Za-z0-9_-]{16,128}$/.test(state)) {
+    json(res, 400, { code: "INVALID_STATE", error: "\u767B\u5F55\u8BF7\u6C42\u65E0\u6548\uFF0C\u8BF7\u4ECE\u539F\u9875\u9762\u91CD\u8BD5\u3002" });
+    return;
+  }
+  const nonce = randomBytes(18).toString("base64");
+  const message = JSON.stringify({ type: "dsh-cloudflare-access:authenticated", state });
+  res.writeHead(200, {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "SAMEORIGIN",
+    "content-security-policy": `default-src 'none'; script-src 'nonce-${nonce}'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'`
+  });
+  res.end(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>\u767B\u5F55\u5B8C\u6210</title><p>\u767B\u5F55\u5B8C\u6210\uFF0C\u53EF\u4EE5\u5173\u95ED\u6B64\u7A97\u53E3\u8FD4\u56DE Harness\u3002</p><script nonce="${nonce}">const message=${message};if(parent!==window){parent.postMessage(message,location.origin)}else{if(typeof BroadcastChannel!=="undefined"){const channel=new BroadcastChannel(message.type);channel.postMessage(message);setTimeout(()=>channel.close(),100)}setTimeout(()=>window.close(),300)}</script></html>`);
 }
 function json(res, status, value) {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" });
@@ -439,7 +473,7 @@ function clean(headers, websocket = false) {
 var Gateway = class {
   constructor(options) {
     this.options = options;
-    this.verify = options.verify ?? accessVerifier(options.deployment);
+    this.verify = options.verify ?? accessVerifier(options.deployment, fetch, options.maxTokenAgeSeconds);
     this.server.on("request", (req, res) => {
       void this.handle(req, res).catch(() => {
         if (!res.headersSent) json(res, 502, { error: "\u8FDC\u7A0B\u5165\u53E3\u6682\u4E0D\u53EF\u7528\uFF0C\u8BF7\u68C0\u67E5\u672C\u673A Harness\u3002" });
@@ -463,6 +497,7 @@ var Gateway = class {
   active = /* @__PURE__ */ new Map();
   leases = /* @__PURE__ */ new Map();
   revoked = /* @__PURE__ */ new Map();
+  leaseSecret = randomBytes(32);
   timer;
   async start() {
     await new Promise((resolve, reject) => {
@@ -504,7 +539,8 @@ var Gateway = class {
     const assertion = req.headers["cf-access-jwt-assertion"];
     if (typeof assertion !== "string" || assertion.length > 16384) throw new Error("assertion");
     const id = await this.verify(assertion);
-    if (id.expires <= Date.now() || this.revoked.has(id.fingerprint)) throw new Error("expired");
+    if (id.expires <= Date.now()) throw new AuthExpired();
+    if (this.revoked.has(id.fingerprint)) throw new Error("revoked");
     return id;
   }
   path(req) {
@@ -524,21 +560,32 @@ var Gateway = class {
     let id;
     try {
       id = await this.identity(req);
-    } catch {
+    } catch (error) {
+      const failure = authenticationFailure(error);
       if (req.method === "GET" && req.headers["sec-fetch-mode"] === "navigate" && req.headers["sec-fetch-dest"] === "document") {
-        res.writeHead(403, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'" });
+        res.writeHead(failure.status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'" });
         res.end('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>\u8BF7\u91CD\u65B0\u767B\u5F55</title><style>body{font:16px/1.7 system-ui,sans-serif;max-width:440px;margin:15vh auto;padding:24px;color:#27272a}h1{font-size:24px}a{display:inline-block;color:#fff;background:#27272a;border-radius:6px;padding:8px 18px;text-decoration:none}</style><h1>\u8BF7\u91CD\u65B0\u767B\u5F55</h1><p>\u5F53\u524D\u8BA4\u8BC1\u65E0\u6548\u6216\u5DF2\u8FC7\u671F\u3002\u9000\u51FA\u540E\uFF0C\u91CD\u65B0\u6253\u5F00\u6B64\u5730\u5740\u767B\u5F55\u3002</p><a href="/cdn-cgi/access/logout">\u9000\u51FA\u5F53\u524D\u767B\u5F55</a></html>');
-      } else json(res, 403, { error: "\u9700\u8981\u6709\u6548\u7684 Cloudflare Access \u8BA4\u8BC1\u3002" });
+      } else json(res, failure.status, { code: failure.code, error: failure.error });
       return;
     }
     const path = this.path(req);
+    if (path === `${PREFIX}/auth/complete` && req.method === "GET") {
+      authenticationComplete(req, res);
+      return;
+    }
     if (path === `${PREFIX}/session` && req.method === "GET") {
       json(res, 200, { remote: true, email: id.email, expires: id.expires, deviceChecks: this.options.deployment.postureChecks.length });
       return;
     }
     if (path === `${PREFIX}/lease` && req.method === "POST") {
       this.leases.set(id.fingerprint, Date.now());
-      json(res, 200, { ok: true });
+      json(res, 200, {
+        ok: true,
+        sessionId: createHmac("sha256", this.leaseSecret).update(id.fingerprint).digest("hex"),
+        principal: createHash2("sha256").update(`${this.options.deployment.audience}:${id.subject}`).digest("hex"),
+        expires: id.expires,
+        leaseMs: this.options.leaseMs ?? 9e4
+      });
       return;
     }
     if (path === `${PREFIX}/logout` && req.method === "POST") {
@@ -830,10 +877,11 @@ function policyMatches(actual, expected) {
 
 // src/controller.ts
 var Controller = class {
-  constructor(store, vault, native, gatewayPort, cloudflaredPath) {
+  constructor(store, vault, native, gatewayPort, cloudflaredPath, maxTokenAgeSeconds = 7200) {
     this.store = store;
     this.vault = vault;
     this.native = native;
+    this.maxTokenAgeSeconds = maxTokenAgeSeconds;
     this.provisioner = new Provisioner(store, vault, gatewayPort);
     this.connector = new Connector(store.directory, cloudflaredPath, () => {
       void this.gateway?.stop();
@@ -843,6 +891,7 @@ var Controller = class {
   store;
   vault;
   native;
+  maxTokenAgeSeconds;
   provisioner;
   connector;
   gateway;
@@ -935,7 +984,7 @@ var Controller = class {
     if (this.store.state.phase !== "configured" || !d?.dnsId || !d.audience) fail("NOT_CONFIGURED", "\u8BF7\u5148\u5B8C\u6210\u90E8\u7F72\u914D\u7F6E\u3002");
     const token = await this.vault.get();
     if (!token) fail("CREDENTIAL", "Tunnel \u8FD0\u884C\u51ED\u636E\u4E22\u5931\uFF0C\u8BF7\u4F7F\u7528\u539F\u914D\u7F6E\u91CD\u65B0\u9884\u89C8\u5E76\u6062\u590D\u3002");
-    const gateway = new Gateway({ deployment: d, native: this.native });
+    const gateway = new Gateway({ deployment: d, native: this.native, maxTokenAgeSeconds: this.maxTokenAgeSeconds });
     try {
       await gateway.start();
       this.gateway = gateway;
@@ -972,7 +1021,7 @@ var Controller = class {
 // src/index.ts
 var name = "dsh-cloudflare-access";
 var inject = ["webServer", "connection", "credentials"];
-var Config = z.object({ instance: z.string().default("web"), gatewayPort: z.natural().min(1024).max(65535).default(3082), dataDir: z.string(), cloudflaredPath: z.string() });
+var Config = z.object({ instance: z.string().default("web"), gatewayPort: z.natural().min(1024).max(65535).default(3082), dataDir: z.string(), cloudflaredPath: z.string(), maxTokenAgeSeconds: z.natural().min(60).max(2678400).default(7200) });
 async function body(req) {
   if (!String(req.headers["content-type"]).startsWith("application/json")) fail("CONTENT_TYPE", "\u9700\u8981 JSON \u8BF7\u6C42\u3002", 415);
   let size = 0;
@@ -1011,7 +1060,7 @@ async function apply(ctx, config) {
     set: (value) => ctx.credentials.set(ref, value),
     get: async () => (await ctx.credentials.resolve(ref))?.value,
     clear: () => ctx.credentials.unset(ref)
-  }, new NativeSession(ctx.webServer.port, (base) => ctx.connection.authenticatedUrl(base)), config.gatewayPort, config.cloudflaredPath);
+  }, new NativeSession(ctx.webServer.port, (base) => ctx.connection.authenticatedUrl(base)), config.gatewayPort, config.cloudflaredPath, config.maxTokenAgeSeconds);
   const activeController = controller;
   ctx.effect(() => () => activeController.dispose(), "cloudflare lifecycle");
   await controller.init();
