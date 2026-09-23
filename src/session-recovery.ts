@@ -60,7 +60,10 @@ export class SessionRecovery {
     this.unsubscribe = this.options.connection.state.subscribe(() => {
       if (this.stopped) return;
       if (this.options.connection.state.getSnapshot() === 'connected' && this.failedSince === undefined && this.lease) this.show('connected');
-      else if (this.options.connection.state.getSnapshot() !== 'connected') { this.needsReconnect = true; this.schedule(1000); }
+      // Native Connection owns its retry loop. Its own reconnect() emits
+      // "connecting" synchronously: forcing another reconnect here cancels
+      // slow handshakes and creates a self-sustaining reconnect loop.
+      else if (this.options.connection.state.getSnapshot() !== 'connected') this.schedule(1000);
     });
     void this.check();
   }
@@ -69,7 +72,8 @@ export class SessionRecovery {
   }
   wake(): void {
     if (this.stopped || this.state === 'account-changed') return;
-    this.needsReconnect = this.needsReconnect || this.options.connection.state.getSnapshot() !== 'connected' || (this.lease !== undefined && this.now() - this.lastSuccess > this.lease.leaseMs / 2);
+    const state = this.options.connection.state.getSnapshot();
+    this.needsReconnect ||= state === 'disconnected' || (state === 'connected' && this.lease !== undefined && this.now() - this.lastSuccess > this.lease.leaseMs / 2);
     void this.check();
   }
   networkChanged(): void {

@@ -14,8 +14,8 @@ const listen = async server => { server.listen(0, '127.0.0.1'); await once(serve
 const close = server => new Promise(resolve => { if (!server) return resolve(); server.closeAllConnections(); server.close(resolve); });
 const bundle = await build({ entryPoints: ['src/session-recovery.ts'], bundle: true, format: 'iife', globalName: 'Recovery', platform: 'browser', write: false });
 const html = `<!doctype html><meta charset="utf-8"><title>Session recovery fixture</title><textarea aria-label="Draft"></textarea><button id="command">Run fixture</button><script src="/fixture.js"></script><script>
-window.connects=0;window.networkState='connected';const listeners=new Set();
-const connection={reconnect(){window.connects++;window.networkState='connected';listeners.forEach(f=>f())},state:{getSnapshot:()=>window.networkState,subscribe:f=>{listeners.add(f);return()=>listeners.delete(f)}}};
+window.connects=0;window.networkState='connected';const listeners=new Set();let handshake;
+const connection={reconnect(){window.connects++;clearTimeout(handshake);window.networkState='connecting';listeners.forEach(f=>f());handshake=setTimeout(()=>{window.networkState='connected';listeners.forEach(f=>f())},5000)},state:{getSnapshot:()=>window.networkState,subscribe:f=>{listeners.add(f);return()=>listeners.delete(f)}}};
 window.recover=()=>{window.networkState='disconnected';listeners.forEach(f=>f());window.dispatchEvent(new Event('online'))};
 window.disposeRecovery=Recovery.installSessionRecovery(connection);
 document.getElementById('command').onclick=()=>fetch('/fixture-command',{method:'POST'});
@@ -72,7 +72,12 @@ try {
   await page.getByText('服务暂不可用，正在重试。', { exact: true }).waitFor();
   let before = await connects(); mode = 'valid'; await wake();
   await page.waitForFunction(n => window.connects > n, before); await assertPreserved();
+  await page.waitForFunction(() => window.networkState === 'connected', undefined, { timeout: 15_000 });
+  await page.waitForTimeout(7000);
+  assert.equal(await connects(), before + 1);
+  assert.equal(await page.getByText('正在恢复连接…', { exact: true }).count(), 0);
   console.log('PASS browser: outage/recovery preserves draft and does not replay commands');
+  console.log('PASS browser: slow native handshake completes without a forced-reconnect feedback loop');
 
   before = await connects(); mode = 'sso'; await wake();
   await page.waitForFunction(n => window.connects > n, before); await assertPreserved();

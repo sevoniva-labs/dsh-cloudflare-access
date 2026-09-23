@@ -66,6 +66,25 @@ test('credential rotation reconnects the official transport without renewing an 
   await s.recovery.check(); expect(s.connection.reconnect).toHaveBeenCalledTimes(1);
   await vi.advanceTimersByTimeAsync(90_000); expect(s.connection.reconnect).toHaveBeenCalledTimes(1);
 });
+test('native connecting notifications do not schedule another forced reconnect', async () => {
+  const s = setup();
+  s.connection.reconnect.mockImplementation(() => {
+    s.setState('connecting');
+    setTimeout(() => s.setState('connected'), 5000);
+  });
+  s.recovery.start(); await vi.advanceTimersByTimeAsync(0);
+  s.probe.mockResolvedValue(lease('rotated')); await s.recovery.check();
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(s.connection.reconnect).toHaveBeenCalledTimes(1);
+  expect(s.render).toHaveBeenLastCalledWith('connected');
+});
+test('focus and heartbeat do not abort a native handshake already in progress', async () => {
+  const s = setup(); s.setState('connecting'); s.recovery.start();
+  await vi.advanceTimersByTimeAsync(0);
+  for (let i = 0; i < 8; i++) { s.recovery.wake(); await vi.advanceTimersByTimeAsync(1000); }
+  expect(s.connection.reconnect).not.toHaveBeenCalled();
+  s.setState('connected'); expect(s.render).toHaveBeenLastCalledWith('connected');
+});
 test('resuming a suspended page rebuilds a stale connection even when it still reports connected', async () => {
   const s = setup(); await s.recovery.check();
   vi.setSystemTime(Date.now() + 300_000); s.recovery.wake(); await vi.advanceTimersByTimeAsync(0);

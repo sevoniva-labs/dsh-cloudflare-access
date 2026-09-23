@@ -87,10 +87,7 @@ var SessionRecovery = class {
     this.unsubscribe = this.options.connection.state.subscribe(() => {
       if (this.stopped) return;
       if (this.options.connection.state.getSnapshot() === "connected" && this.failedSince === void 0 && this.lease) this.show("connected");
-      else if (this.options.connection.state.getSnapshot() !== "connected") {
-        this.needsReconnect = true;
-        this.schedule(1e3);
-      }
+      else if (this.options.connection.state.getSnapshot() !== "connected") this.schedule(1e3);
     });
     void this.check();
   }
@@ -103,7 +100,8 @@ var SessionRecovery = class {
   }
   wake() {
     if (this.stopped || this.state === "account-changed") return;
-    this.needsReconnect = this.needsReconnect || this.options.connection.state.getSnapshot() !== "connected" || this.lease !== void 0 && this.now() - this.lastSuccess > this.lease.leaseMs / 2;
+    const state = this.options.connection.state.getSnapshot();
+    this.needsReconnect ||= state === "disconnected" || state === "connected" && this.lease !== void 0 && this.now() - this.lastSuccess > this.lease.leaseMs / 2;
     void this.check();
   }
   networkChanged() {
