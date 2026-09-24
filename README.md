@@ -17,12 +17,12 @@ For owners and trusted administrators only. Authorized users share the same Harn
 
 插件设置页，使用示例数据展示，未连接实际 Cloudflare 部署。
 
-![连接状态与设备验证配置](https://raw.githubusercontent.com/sevoniva-labs/dsh-cloudflare-access/v0.1.0-alpha.10/docs/images/connection-status.png)
+![连接状态与设备验证配置](https://raw.githubusercontent.com/sevoniva-labs/dsh-cloudflare-access/v0.1.0-alpha.11/docs/images/connection-status.png)
 
 <details>
 <summary>访问设置与确认发布</summary>
 
-![访问设置与确认发布，使用示例域名、邮箱和设备检查](https://raw.githubusercontent.com/sevoniva-labs/dsh-cloudflare-access/v0.1.0-alpha.10/docs/images/access-setup.png)
+![访问设置与确认发布，使用示例域名、邮箱和设备检查](https://raw.githubusercontent.com/sevoniva-labs/dsh-cloudflare-access/v0.1.0-alpha.11/docs/images/access-setup.png)
 
 </details>
 
@@ -33,16 +33,18 @@ For owners and trusted administrators only. Authorized users share the same Harn
 - 使用尚未配置 DNS 或 Access 应用的子域名，例如 `harness.example.com`。
 - Harness 主机能够连接 Cloudflare，远程使用期间保持运行。
 
-当前版本为 `0.1.0-alpha.10`（预发布）。macOS 已完成部署验证；Linux arm64/x64 支持自动安装，尚未完成部署验证。Windows 暂不支持自动安装。其他 DSH 版本尚未验证。
+当前版本为 `0.1.0-alpha.11`（预发布）。macOS 已完成部署验证；Linux arm64/x64 支持自动安装，尚未完成部署验证。Windows 暂不支持自动安装。其他 DSH 版本尚未验证。
 
 ## 安装与配置
 
 ```sh
-dsh plugin --profile web add github:sevoniva-labs/dsh-cloudflare-access#v0.1.0-alpha.10
+dsh plugin --profile web add github:sevoniva-labs/dsh-cloudflare-access#v0.1.0-alpha.11
 dsh --profile web --host 127.0.0.1
 ```
 
 也可从 [Releases](https://github.com/sevoniva-labs/dsh-cloudflare-access/releases) 下载 `.tgz` 安装包，按同页 `SHA256SUMS.txt` 校验后安装。
+
+npm 包名为 [`@sevoniva/dsh-cloudflare-access`](https://www.npmjs.com/package/@sevoniva/dsh-cloudflare-access)。预发布版本使用 `alpha` 标签，不作为稳定版本发布。
 
 在主机上打开 DSH 输出的本机启动链接，进入 **设置 → Cloudflare 零信任接入**：
 
