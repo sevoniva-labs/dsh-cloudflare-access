@@ -25,7 +25,7 @@ npm run test:browser
 npm run test:browser:assets
 ```
 
-已有测试运行时时，可用 `PLAYWRIGHT_MODULE` 指定模块路径、`PLAYWRIGHT_EXECUTABLE` 指定 Chromium 路径。测试使用本机随机端口，不连接实际 Cloudflare 部署。模拟时间测试不代表真实浏览器长期驻留结果。
+已有浏览器测试环境时，可用 `PLAYWRIGHT_MODULE` 指定模块路径、`PLAYWRIGHT_EXECUTABLE` 指定 Chromium 路径。测试使用本机随机端口，不连接实际 Cloudflare 部署；长期驻留仍需实机验证。
 
 涉及 Cloudflare API、DSH 版本或设备检查的变更，应另用独立 `DSH_HOME`、端口和测试子域名验证：
 
@@ -35,7 +35,7 @@ npm run test:browser:assets
 4. 重启 DSH，确认入口和连接器恢复。设备策略变更还需检查合规、不合规及已撤销设备。
 5. 删除测试部署，确认 DNS、Tunnel 和 Access 应用已清理，共享登录方式仍保留。
 
-需要模型端到端验证时，仅使用专用测试凭据和测试任务。不要中断使用中的部署或将测试结果表述为所有平台的稳定性保证。
+模型端到端测试须使用专用凭据和测试任务，不得中断现有部署。测试记录应列明环境、结果及未验证项。
 
 ## 代码结构
 
@@ -51,7 +51,7 @@ npm run test:browser:assets
 ## 提交检查
 
 - 示例使用 `example.com` 等保留域名和虚构数据。
-- 不提交真实域名、个人邮箱、本机路径、账号或资源 ID、凭据、日志、截图、浏览器状态及部署备份。
+- 不提交真实域名、个人邮箱、本机路径、账号或资源 ID、凭据、运行日志、浏览器状态及部署备份。公开截图仅使用示例数据。
 - 检查暂存区、构建产物和分发包；`.gitignore` 不能阻止已跟踪文件泄露信息。
 - 需要隐藏提交邮箱时，使用 GitHub no-reply 邮箱。
 - 安装 Gitleaks 后，可运行 `gitleaks git --log-opts=--all --redact` 检查可达历史。

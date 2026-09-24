@@ -51,7 +51,7 @@ test('normal startup and brief reconnects stay quiet, slow connections and auth 
     s.setState('connected'); expect(visible.size).toBe(0);
     fetcher.mockImplementation(async () => new Response('', { status: 403 }));
     s.setState('disconnected'); await vi.advanceTimersByTimeAsync(1000);
-    expect(text()).toContain('当前账号无访问权限');
+    expect(text()).toContain('访问验证未通过，请检查账号权限和设备状态');
     dispose(); expect(owners.size).toBe(0); await vi.advanceTimersByTimeAsync(120_000); expect(visible.size).toBe(0);
   } finally { dispose(); }
 });

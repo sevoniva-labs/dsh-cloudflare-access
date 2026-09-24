@@ -15,14 +15,14 @@ For owners and trusted administrators only. Authorized users share the same Harn
 
 ## 界面预览
 
-以下截图使用实际插件设置组件，在独立演示页面中加载虚构数据；不是生产部署或 Cloudflare 认证成功的证明。
+插件设置页，使用示例数据展示，未连接实际 Cloudflare 部署。
 
-![连接状态与设备验证配置](https://raw.githubusercontent.com/sevoniva-labs/dsh-cloudflare-access/v0.1.0-alpha.9/docs/images/connection-status.png)
+![连接状态与设备验证配置](https://raw.githubusercontent.com/sevoniva-labs/dsh-cloudflare-access/v0.1.0-alpha.10/docs/images/connection-status.png)
 
 <details>
-<summary>访问设置与发布确认</summary>
+<summary>访问设置与确认发布</summary>
 
-![访问设置与发布确认，域名、邮箱和设备检查均为示例](https://raw.githubusercontent.com/sevoniva-labs/dsh-cloudflare-access/v0.1.0-alpha.9/docs/images/access-setup.png)
+![访问设置与确认发布，使用示例域名、邮箱和设备检查](https://raw.githubusercontent.com/sevoniva-labs/dsh-cloudflare-access/v0.1.0-alpha.10/docs/images/access-setup.png)
 
 </details>
 
@@ -33,23 +33,23 @@ For owners and trusted administrators only. Authorized users share the same Harn
 - 使用尚未配置 DNS 或 Access 应用的子域名，例如 `harness.example.com`。
 - Harness 主机能够连接 Cloudflare，远程使用期间保持运行。
 
-当前插件版本为 `0.1.0-alpha.9`，仍处于测试阶段。已在 macOS 上验证；Linux 的自动安装路径支持 arm64/x64，但尚未完成实际部署验证。Windows 暂未支持自动安装。其他 DSH 版本不在当前兼容范围内。
+当前版本为 `0.1.0-alpha.10`（预发布）。macOS 已完成部署验证；Linux arm64/x64 支持自动安装，尚未完成部署验证。Windows 暂不支持自动安装。其他 DSH 版本尚未验证。
 
 ## 安装与配置
 
 ```sh
-dsh plugin --profile web add github:sevoniva-labs/dsh-cloudflare-access#v0.1.0-alpha.9
+dsh plugin --profile web add github:sevoniva-labs/dsh-cloudflare-access#v0.1.0-alpha.10
 dsh --profile web --host 127.0.0.1
 ```
 
-也可从 [Releases](https://github.com/sevoniva-labs/dsh-cloudflare-access/releases) 下载带构建产物的 `.tgz`，按同页 `SHA256SUMS.txt` 核对校验值后安装。本版本是预发布版本，不应视为稳定版。
+也可从 [Releases](https://github.com/sevoniva-labs/dsh-cloudflare-access/releases) 下载 `.tgz` 安装包，按同页 `SHA256SUMS.txt` 校验后安装。
 
 在主机上打开 DSH 输出的本机启动链接，进入 **设置 → Cloudflare 零信任接入**：
 
 1. 安装 cloudflared，或指定已有官方可执行文件的路径。
-2. 填写 Cloudflare API Token，选择域名、子域名和登录方式。
+2. 填写 Cloudflare API Token，选择域名，填写访问子域名并选择登录方式。
 3. 填写允许访问的邮箱。需要可信设备限制时，填写已有的设备检查 ID。
-4. 检查待创建资源，输入完整子域名确认发布。
+4. 点击“检查配置”，核对资源和访问权限，输入完整访问域名后点击“发布配置”。
 5. 等待隧道连接成功，再通过 HTTPS 域名登录。
 
 API Token 仅用于配置操作，不持久保存。插件不会覆盖其他部署的 DNS、Access 应用或 Tunnel。设备检查必须预先在 Cloudflare Zero Trust 中配置；只设置邮箱白名单不代表启用了设备验证。
@@ -64,7 +64,7 @@ API Token 仅用于配置操作，不持久保存。插件不会覆盖其他部�
 | Account | Access: Apps and Policies: Edit |
 | Account | Access: Organizations, Identity Providers, and Groups: Read |
 | Zone | Zone: Read；DNS: Edit |
-| 自动创建邮件验证码登录方式时 | Identity Providers: Edit |
+| 自动创建邮箱验证码登录方式时 | Identity Providers: Edit |
 | 使用设备检查时 | Access: Device Posture: Read |
 
 具体名称以 [Cloudflare API 权限表](https://developers.cloudflare.com/fundamentals/api/reference/permissions/) 为准。
@@ -86,7 +86,7 @@ API Token 仅用于配置操作，不持久保存。插件不会覆盖其他部�
 
 Harness 和插件网关都只监听 `127.0.0.1`，两者不能使用同一端口。默认状态目录为 `$DSH_HOME/dsh-cloudflare-access/<instance>`；未设置 `DSH_HOME` 时使用 `~/.dsh`。多个实例必须使用不同的状态目录和网关端口。
 
-插件随 DSH 启停，不安装系统服务。需要开机启动时，请自行通过 launchd 或 systemd 管理 DSH。
+插件随 DSH 启停，不安装系统服务。需要开机启动时，可通过 launchd 或 systemd 管理 DSH。
 
 ## 远程使用
 
@@ -100,7 +100,7 @@ Harness 和插件网关都只监听 `127.0.0.1`，两者不能使用同一端口
 
 新建 Access 应用的默认会话为一小时。网关另设凭据年龄上限，默认两小时；长连接受凭据到期时间和浏览器租约限制。修改会话时长不会消除重新认证的必要性，插件更新也不会放宽已有访问策略。
 
-远程模型编辑和连接提示使用针对 DSH `0.1.6-alpha.2` 的响应适配，不修改已安装的官方文件。未知脚本结构保持原样，因此升级 DSH 后需要重新验证这些功能。加载速度也取决于网络、已启用插件和会话数据，缓存不等于免除初始化。
+远程模型编辑和连接提示适配 DSH `0.1.6-alpha.2`，不修改官方文件。无法识别的脚本保持原样；升级 DSH 后须验证这两项功能。页面启动仍需加载插件和会话数据，耗时取决于网络与数据量。
 
 ## 更新与卸载
 

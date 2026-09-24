@@ -203,7 +203,7 @@ export function installSessionRecovery(connection: BrowserConnection): () => voi
   let bannerTimer: ReturnType<typeof setTimeout> | undefined;
   const labels: Record<Exclude<RecoveryState, 'connected'>, string> = {
     connecting: '正在连接服务…', recovering: '正在重新连接…', offline: '网络已断开，恢复后自动连接。', login: '登录已过期，请重新登录。',
-    denied: '当前账号无访问权限。', unavailable: '服务暂不可用，正在重试。', 'account-changed': '登录账号已更换，请保存草稿后重新打开页面。',
+    denied: '访问验证未通过，请检查账号权限和设备状态。', unavailable: '服务暂不可用，正在重试。', 'account-changed': '登录账号已更换，请保存草稿后重新打开页面。',
   };
   const recovery = new SessionRecovery({ connection, probe: probeLease, authenticate: authenticateBrowser, online: () => navigator.onLine,
     render: state => {
@@ -219,7 +219,7 @@ export function installSessionRecovery(connection: BrowserConnection): () => voi
         const text = document.createElement('span'); text.textContent = labels[state]; banner.append(text);
         if (state !== 'account-changed' && state !== 'offline') {
           const button = document.createElement('button'); button.type = 'button';
-          button.textContent = state === 'login' ? '登录' : '重试';
+          button.textContent = state === 'login' ? '重新登录' : '重试';
           button.style.cssText = 'color:inherit;background:none;border:1px solid #888;border-radius:4px;padding:4px 10px;cursor:pointer';
           button.onclick = () => state === 'login' ? recovery.login() : recovery.wake(); banner.append(button);
         }

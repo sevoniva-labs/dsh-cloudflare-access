@@ -94,7 +94,7 @@ describe('transactional provisioning with mocked Cloudflare API', () => {
     fake.failAt = ''; await deploy(); expect(fake.apps).toHaveLength(1); expect(fake.apps[0]!.name).toBe('DeepSeek Harness');
   });
   test('uncertain DNS write is recovered without duplicating it', async () => {
-    fake.uncertainDns = true; await expect(deploy()).rejects.toThrow('写入结果可能不确定');
+    fake.uncertainDns = true; await expect(deploy()).rejects.toMatchObject({ code: 'CF_NETWORK' });
     expect(fake.dns).toHaveLength(1); expect(store.state.phase).toBe('provisioning');
     await deploy(); expect(fake.dns).toHaveLength(1); expect(store.state.phase).toBe('configured');
   });

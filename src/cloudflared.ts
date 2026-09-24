@@ -43,10 +43,10 @@ export class Connector {
     if (!['darwin', 'linux'].includes(platform) || !['arm64', 'x64'].includes(arch)) fail('PLATFORM', '自动安装暂支持 macOS/Linux 的 arm64 和 x64；请手动指定官方 cloudflared 路径。');
     const assetName = `cloudflared-${platform}-${arch === 'x64' ? 'amd64' : arch}${platform === 'darwin' ? '.tgz' : ''}`;
     const response = await fetch(`https://api.github.com/repos/cloudflare/cloudflared/releases/tags/${CLOUDFLARED_VERSION}`, { signal: AbortSignal.timeout(20_000) });
-    if (!response.ok) fail('DOWNLOAD', '无法读取官方发布信息，请通过系统代理重试或手动安装 cloudflared。');
+    if (!response.ok) fail('DOWNLOAD', '无法读取 cloudflared 发布信息，请检查网络或手动安装。');
     const release = await response.json() as { tag_name: string; assets: { name: string; browser_download_url: string; digest: string }[] };
     const asset = release.assets.find(x => x.name === assetName);
-    if (release.tag_name !== CLOUDFLARED_VERSION || !asset || !/^sha256:[a-f0-9]{64}$/.test(asset.digest ?? '') || asset.browser_download_url !== `https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/${assetName}`) fail('CHECKSUM', '官方发布缺少可验证的 SHA-256，已停止安装。');
+    if (release.tag_name !== CLOUDFLARED_VERSION || !asset || !/^sha256:[a-f0-9]{64}$/.test(asset.digest ?? '') || asset.browser_download_url !== `https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/${assetName}`) fail('CHECKSUM', 'cloudflared 发布信息不符合预期或缺少 SHA-256 校验值，安装已停止。');
     const download = await fetch(asset.browser_download_url, { signal: AbortSignal.timeout(120_000) });
     if (!download.ok || !download.body) fail('DOWNLOAD', '官方连接器下载失败。');
     const chunks: Uint8Array[] = []; let size = 0;

@@ -26,8 +26,8 @@ async function body(req: IncomingMessage): Promise<Record<string, unknown>> {
 }
 export async function apply(ctx: Context, config: Config): Promise<void> {
   if (!/^[a-z0-9-]{1,40}$/.test(config.instance)) fail('INSTANCE', 'instance 仅支持小写字母、数字和连字符。');
-  if (ctx.webServer.host !== '127.0.0.1') fail('BIND', '使用 Cloudflare 插件时，官方 webServer 必须仅监听 127.0.0.1。');
-  if (config.gatewayPort === ctx.webServer.port) fail('PORT', '入口端口不能与 Harness 端口相同。');
+  if (ctx.webServer.host !== '127.0.0.1') fail('BIND', 'Harness 必须仅监听 127.0.0.1，请使用 --host 127.0.0.1 启动。');
+  if (config.gatewayPort === ctx.webServer.port) fail('PORT', '网关端口不能与 Harness 端口相同。');
   const directory = config.dataDir ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'dsh-cloudflare-access', config.instance);
   if (!isAbsolute(directory) || (config.cloudflaredPath && !isAbsolute(config.cloudflaredPath))) fail('PATH', '请使用绝对路径。');
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -49,7 +49,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   await controller.init();
   if (compromised) { await controller.dispose(); fail('INSTANCE_LOCK', '本机实例锁失效，入口已停止。'); }
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: PREFIX, handler: async (req, res) => {
-    if (!localAdmin(req, ctx.webServer.port, !ctx.connection.requestRejection(req))) { json(res, 403, { error: 'Cloudflare 配置仅允许本机已认证浏览器访问。' }); return; }
+    if (!localAdmin(req, ctx.webServer.port, !ctx.connection.requestRejection(req))) { json(res, 403, { error: '请通过 Harness 主机上的本机启动链接访问 Cloudflare 配置。' }); return; }
     try {
       const path = new URL(req.url!, 'http://local.invalid').pathname.slice(PREFIX.length);
       if (compromised) fail('INSTANCE_LOCK', '本机实例锁失效，入口已停止。', 503);

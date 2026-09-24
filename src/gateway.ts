@@ -206,7 +206,7 @@ export class Gateway {
       delete upstreamHeaders['if-none-match']; delete upstreamHeaders['if-modified-since']; delete upstreamHeaders.range;
     }
     const upstream = request({ agent: false, hostname: '127.0.0.1', port: this.options.native.port, path: req.url, method: req.method, headers: upstreamHeaders }, response => {
-      if (response.statusCode === 401) { this.options.native.reset(); response.resume(); json(res, 503, { error: '本机会话已更新，请重试。请求未被自动重放。' }); return; }
+      if (response.statusCode === 401) { this.options.native.reset(); response.resume(); json(res, 503, { error: '本机会话已更新，本次请求未重试。请确认操作结果后再试。' }); return; }
       const headers = clean(response.headers);
       const cacheable = ['GET', 'HEAD'].includes(req.method ?? '') && response.statusCode === 200 && versionedAsset(req.url!, String(headers['content-type'] ?? ''));
       headers['cache-control'] = cacheable ? (modelsBundleRequest(req.url!) || settingsBundleRequest(req.url!) ? 'private, no-cache' : 'private, max-age=31536000, immutable') : 'no-store';

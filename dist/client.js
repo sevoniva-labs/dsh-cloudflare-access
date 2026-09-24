@@ -290,7 +290,7 @@ function installSessionRecovery(connection) {
     recovering: "\u6B63\u5728\u91CD\u65B0\u8FDE\u63A5\u2026",
     offline: "\u7F51\u7EDC\u5DF2\u65AD\u5F00\uFF0C\u6062\u590D\u540E\u81EA\u52A8\u8FDE\u63A5\u3002",
     login: "\u767B\u5F55\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u91CD\u65B0\u767B\u5F55\u3002",
-    denied: "\u5F53\u524D\u8D26\u53F7\u65E0\u8BBF\u95EE\u6743\u9650\u3002",
+    denied: "\u8BBF\u95EE\u9A8C\u8BC1\u672A\u901A\u8FC7\uFF0C\u8BF7\u68C0\u67E5\u8D26\u53F7\u6743\u9650\u548C\u8BBE\u5907\u72B6\u6001\u3002",
     unavailable: "\u670D\u52A1\u6682\u4E0D\u53EF\u7528\uFF0C\u6B63\u5728\u91CD\u8BD5\u3002",
     "account-changed": "\u767B\u5F55\u8D26\u53F7\u5DF2\u66F4\u6362\uFF0C\u8BF7\u4FDD\u5B58\u8349\u7A3F\u540E\u91CD\u65B0\u6253\u5F00\u9875\u9762\u3002"
   };
@@ -316,7 +316,7 @@ function installSessionRecovery(connection) {
         if (state !== "account-changed" && state !== "offline") {
           const button = document.createElement("button");
           button.type = "button";
-          button.textContent = state === "login" ? "\u767B\u5F55" : "\u91CD\u8BD5";
+          button.textContent = state === "login" ? "\u91CD\u65B0\u767B\u5F55" : "\u91CD\u8BD5";
           button.style.cssText = "color:inherit;background:none;border:1px solid #888;border-radius:4px;padding:4px 10px;cursor:pointer";
           button.onclick = () => state === "login" ? recovery.login() : recovery.wake();
           banner.append(button);
@@ -354,7 +354,7 @@ function installSessionRecovery(connection) {
 // src/client.ts
 async function api(action, value) {
   const response = await fetch(`${PREFIX}/${action}`, { method: value === void 0 ? "GET" : "POST", credentials: "same-origin", redirect: "manual", headers: { "X-Requested-With": "XMLHttpRequest", ...value === void 0 ? {} : { "content-type": "application/json" } }, body: value === void 0 ? void 0 : JSON.stringify(value) });
-  if (response.type === "opaqueredirect" || response.status === 401) throw new Error("\u767B\u5F55\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u4F7F\u7528\u9875\u9762\u4E0B\u65B9\u7684\u767B\u5F55\u5165\u53E3\u3002");
+  if (response.type === "opaqueredirect" || response.status === 401) throw new Error("\u767B\u5F55\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u91CD\u65B0\u767B\u5F55\u3002");
   let result;
   try {
     result = await response.json();
@@ -413,8 +413,8 @@ function createClient(require2) {
         null,
         h("h3", null, "\u5DF2\u767B\u5F55"),
         h("p", null, status.email),
-        h("p", null, "\u5F53\u524D\u4F7F\u7528\u5171\u4EAB\u5DE5\u4F5C\u73AF\u5883\u3002"),
-        h("p", null, "\u8BBF\u95EE\u8BBE\u7F6E\u8BF7\u5728\u8FD0\u884C Harness \u7684\u7535\u8111\u4E0A\u4FEE\u6539\u3002"),
+        h("p", null, "\u6240\u6709\u83B7\u51C6\u7528\u6237\u5171\u4EAB\u6B64 Harness \u7684\u4F1A\u8BDD\u3001\u6587\u4EF6\u548C\u5DE5\u5177\u6743\u9650\u3002"),
+        h("p", null, "\u8BF7\u5728 Harness \u4E3B\u673A\u4E0A\u4FEE\u6539\u8BBF\u95EE\u8BBE\u7F6E\u3002"),
         button("\u9000\u51FA\u767B\u5F55", async () => {
           await api("logout", {});
           location.assign("/cdn-cgi/access/logout");
@@ -425,7 +425,7 @@ function createClient(require2) {
         box(h(
           R.Fragment,
           null,
-          h("strong", null, status.running ? "\u5DF2\u542F\u7528" : "\u672A\u542F\u7528"),
+          h("strong", null, status.running ? "\u8FDC\u7A0B\u5165\u53E3\u5DF2\u542F\u7528" : "\u8FDC\u7A0B\u5165\u53E3\u672A\u542F\u7528"),
           h("p", null, `\u96A7\u9053\uFF1A${{ stopped: "\u672A\u542F\u52A8", starting: "\u8FDE\u63A5\u4E2D", connected: "\u5DF2\u8FDE\u63A5", retrying: "\u7B49\u5F85\u91CD\u8FDE", failed: "\u8FDE\u63A5\u5931\u8D25" }[status.connector ?? "stopped"] ?? "\u672A\u77E5"}`),
           d && h("p", null, h("a", { href: `https://${d.hostname}`, target: "_blank", rel: "noreferrer" }, d.hostname)),
           d && h("p", null, `\u8BBE\u5907\u9A8C\u8BC1\uFF1A${d.postureChecks.length ? "\u5DF2\u914D\u7F6E" : "\u672A\u914D\u7F6E"}`),
@@ -434,19 +434,19 @@ function createClient(require2) {
             await api("install-connector", {});
             setNote("cloudflared \u5B89\u88C5\u5B8C\u6210\u3002");
           }),
-          d && button("\u542F\u7528", async () => {
+          d && button("\u542F\u7528\u5165\u53E3", async () => {
             await api("start", {});
           }, !!status.running),
-          d && button("\u505C\u7528", async () => {
+          d && button("\u505C\u7528\u5165\u53E3", async () => {
             await api("stop", {});
-            setNote("\u5DF2\u505C\u7528\uFF0C\u4E91\u7AEF\u914D\u7F6E\u4FDD\u7559\u3002");
+            setNote("\u8FDC\u7A0B\u5165\u53E3\u5DF2\u505C\u7528\uFF0CCloudflare \u8D44\u6E90\u5DF2\u4FDD\u7559\u3002");
           }, !status.enabled)
         )),
         box(h(
           R.Fragment,
           null,
           h("h3", null, "Cloudflare \u51ED\u636E"),
-          h("p", null, "\u7528\u4E8E\u914D\u7F6E DNS\u3001Access \u548C Tunnel\u3002\u6B64 Token \u4E0D\u4FDD\u5B58\u3002"),
+          h("p", null, "API Token \u4EC5\u7528\u4E8E\u914D\u7F6E Cloudflare \u8D44\u6E90\uFF0C\u4E0D\u5199\u5165\u78C1\u76D8\u3002"),
           field("API Token", token, setToken, "password"),
           button("\u9A8C\u8BC1\u5E76\u8BFB\u53D6\u57DF\u540D", async () => {
             const list = await api("discover", { token });
@@ -455,7 +455,7 @@ function createClient(require2) {
             setPreview(void 0);
             setNote(`\u5DF2\u8BFB\u53D6 ${list.length} \u4E2A\u57DF\u540D\u3002`);
           }, !token),
-          h("details", { style: { marginTop: 12, fontSize: 12, opacity: 0.75 } }, h("summary", null, "Token \u6743\u9650"), h("p", null, "Zone Read\u3001DNS Edit\u3001Cloudflare Tunnel Edit\u3001Access Apps & Policies Edit\u3001Access Organizations/Identity Providers Read\u3002\u521B\u5EFA\u90AE\u4EF6\u9A8C\u8BC1\u7801\u767B\u5F55\u65B9\u5F0F\u9700 Identity Providers Edit\uFF1B\u8BBE\u5907\u9A8C\u8BC1\u9700 Device Posture Read\u3002"))
+          h("details", { style: { marginTop: 12, fontSize: 12, opacity: 0.75 } }, h("summary", null, "Token \u6743\u9650"), h("p", null, "Zone Read\u3001DNS Edit\u3001Cloudflare Tunnel Edit\u3001Access Apps & Policies Edit\u3001Access Organizations/Identity Providers Read\u3002\u521B\u5EFA\u90AE\u7BB1\u9A8C\u8BC1\u7801\u767B\u5F55\u65B9\u5F0F\u9700 Identity Providers Edit\uFF1B\u8BBE\u5907\u9A8C\u8BC1\u9700 Device Posture Read\u3002"))
         )),
         zones.length > 0 && box(h(
           R.Fragment,
@@ -472,19 +472,19 @@ function createClient(require2) {
               void task(async () => setProviders(await api("providers", { token, accountId: zone.accountId })))();
             }
           } }, h("option", { value: "" }, "\u8BF7\u9009\u62E9\u57DF\u540D"), ...zones.map((z) => h("option", { key: z.id, value: z.id }, `${z.name} \xB7 ${z.accountName}`)))),
-          field("\u8BBF\u95EE\u5730\u5740", hostname, setHost, "text", "harness.example.com"),
-          field("\u5141\u8BB8\u7684\u90AE\u7BB1", emails, setEmails, "text", "you@example.com"),
+          field("\u8BBF\u95EE\u57DF\u540D", hostname, setHost, "text", "harness.example.com"),
+          field("\u5141\u8BB8\u8BBF\u95EE\u7684\u90AE\u7BB1", emails, setEmails, "text", "you@example.com"),
           h("p", { style: { margin: "4px 0", fontSize: 12, opacity: 0.75 } }, "\u591A\u4E2A\u90AE\u7BB1\u4EE5\u9017\u53F7\u5206\u9694\u3002"),
-          h("label", { style: { display: "block", marginTop: 14 } }, "\u8BA4\u8BC1\u65B9\u5F0F", h("select", { "aria-label": "\u8BA4\u8BC1\u65B9\u5F0F", style: fieldStyle, value: provider, disabled: busy, onChange: (e) => {
+          h("label", { style: { display: "block", marginTop: 14 } }, "\u767B\u5F55\u65B9\u5F0F", h("select", { "aria-label": "\u767B\u5F55\u65B9\u5F0F", style: fieldStyle, value: provider, disabled: busy, onChange: (e) => {
             setProvider(e.target.value);
             setPreview(void 0);
-          } }, h("option", { value: "otp" }, "\u90AE\u4EF6\u9A8C\u8BC1\u7801\uFF08One-time PIN\uFF09"), ...providers.filter((p) => p.type !== "onetimepin").map((p) => h("option", { key: p.id, value: p.id }, `${p.name || p.type} (${p.type})`)))),
+          } }, h("option", { value: "otp" }, "\u90AE\u7BB1\u9A8C\u8BC1\u7801\uFF08One-time PIN\uFF09"), ...providers.filter((p) => p.type !== "onetimepin").map((p) => h("option", { key: p.id, value: p.id }, `${p.name || p.type} (${p.type})`)))),
           h(
             "details",
             { style: { marginTop: 16 } },
             h("summary", null, "\u8BBE\u5907\u9A8C\u8BC1\uFF08\u53EF\u9009\uFF09"),
             field("\u8BBE\u5907\u68C0\u67E5 ID", posture, setPosture),
-            h("p", { style: { fontSize: 12, opacity: 0.75 } }, "\u9700\u5148\u5728 Zero Trust \u4E2D\u521B\u5EFA\u8BBE\u5907\u68C0\u67E5\u3002\u591A\u4E2A ID \u4EE5\u9017\u53F7\u5206\u9694\uFF0C\u5168\u90E8\u6EE1\u8DB3\u540E\u624D\u80FD\u8BBF\u95EE\u3002\u7559\u7A7A\u5219\u53EA\u9A8C\u8BC1\u8EAB\u4EFD\u3002")
+            h("p", { style: { fontSize: 12, opacity: 0.75 } }, "\u8BF7\u5148\u5728 Cloudflare Zero Trust \u4E2D\u521B\u5EFA\u8BBE\u5907\u68C0\u67E5\u3002\u591A\u4E2A ID \u7528\u9017\u53F7\u5206\u9694\uFF0C\u6240\u6709\u68C0\u67E5\u5747\u987B\u901A\u8FC7\u3002\u7559\u7A7A\u65F6\u4EC5\u9A8C\u8BC1\u8EAB\u4EFD\u3002")
           ),
           button("\u68C0\u67E5\u914D\u7F6E", async () => {
             const zone = zones.find((z) => z.id === zoneId);
@@ -496,24 +496,24 @@ function createClient(require2) {
         preview && box(h(
           R.Fragment,
           null,
-          h("h3", null, "\u53D1\u5E03\u786E\u8BA4"),
-          h("p", null, `\u8BBF\u95EE\u5730\u5740\uFF1A${preview.setup.hostname}`),
-          h("p", null, `\u5141\u8BB8\u90AE\u7BB1\uFF1A${preview.setup.emails.join(", ")}`),
-          h("p", null, `\u5C06\u521B\u5EFA Access \u5E94\u7528\u3001\u8BBF\u95EE\u7B56\u7565\u3001Tunnel \u548C DNS \u8BB0\u5F55${preview.createOtp ? "\uFF0C\u5E76\u542F\u7528\u90AE\u4EF6\u9A8C\u8BC1\u7801\u767B\u5F55" : ""}\u3002`),
-          h("p", null, "\u83B7\u51C6\u7528\u6237\u5171\u4EAB\u6B64 Harness \u7684\u6570\u636E\u548C\u5DE5\u5177\u6743\u9650\u3002\u4EC5\u5411\u53EF\u4FE1\u7BA1\u7406\u5458\u5F00\u653E\u3002"),
-          h("p", { style: { fontSize: 12, opacity: 0.75 } }, "\u786E\u8BA4\u6709\u6548\u671F\uFF1A10 \u5206\u949F\u3002"),
-          h("label", null, "\u8F93\u5165\u8BBF\u95EE\u5730\u5740\u4EE5\u786E\u8BA4", h("input", { style: fieldStyle, value: confirmation, disabled: busy, onChange: (e) => setConfirmation(e.target.value) })),
-          button("\u53D1\u5E03", async () => {
+          h("h3", null, "\u786E\u8BA4\u53D1\u5E03"),
+          h("p", null, `\u8BBF\u95EE\u57DF\u540D\uFF1A${preview.setup.hostname}`),
+          h("p", null, `\u5141\u8BB8\u8BBF\u95EE\u7684\u90AE\u7BB1\uFF1A${preview.setup.emails.join(", ")}`),
+          h("p", null, `\u5C06\u914D\u7F6E Access \u5E94\u7528\u3001\u8BBF\u95EE\u7B56\u7565\u3001Tunnel \u548C DNS \u8BB0\u5F55${preview.createOtp ? "\uFF0C\u5E76\u542F\u7528\u90AE\u7BB1\u9A8C\u8BC1\u7801\u767B\u5F55" : ""}\u3002`),
+          h("p", null, "\u4EC5\u5411\u53EF\u4FE1\u7BA1\u7406\u5458\u5F00\u653E\u3002\u6240\u6709\u83B7\u51C6\u7528\u6237\u5171\u4EAB\u6B64 Harness \u7684\u4F1A\u8BDD\u3001\u6587\u4EF6\u548C\u5DE5\u5177\u6743\u9650\u3002"),
+          h("p", { style: { fontSize: 12, opacity: 0.75 } }, "\u914D\u7F6E\u68C0\u67E5\u7ED3\u679C\u5728 10 \u5206\u949F\u5185\u6709\u6548\u3002"),
+          h("label", null, "\u8F93\u5165\u5B8C\u6574\u8BBF\u95EE\u57DF\u540D\u4EE5\u786E\u8BA4", h("input", { style: fieldStyle, value: confirmation, disabled: busy, onChange: (e) => setConfirmation(e.target.value) })),
+          button("\u53D1\u5E03\u914D\u7F6E", async () => {
             await api("provision", { planId: preview.planId, hostname: confirmation });
             setPreview(void 0);
-            setNote("\u5DF2\u53D1\u5E03\uFF0C\u7B49\u5F85\u96A7\u9053\u8FDE\u63A5\u3002");
+            setNote("\u914D\u7F6E\u5DF2\u53D1\u5E03\uFF0C\u96A7\u9053\u6B63\u5728\u8FDE\u63A5\u3002");
           }, confirmation !== preview.setup.hostname)
         )),
         d && box(h(
           R.Fragment,
           null,
           h("h3", null, "\u5220\u9664\u8BBF\u95EE\u914D\u7F6E"),
-          h("p", null, "\u5220\u9664\u672C\u5B9E\u4F8B\u7BA1\u7406\u7684 DNS\u3001Tunnel \u548C Access \u5E94\u7528\uFF0C\u5171\u4EAB\u767B\u5F55\u65B9\u5F0F\u4FDD\u7559\u3002\u8BF7\u5148\u505C\u7528\u5E76\u586B\u5199 API Token\u3002"),
+          h("p", null, "\u5220\u9664\u672C\u5B9E\u4F8B\u7BA1\u7406\u7684 DNS \u8BB0\u5F55\u3001Tunnel \u548C Access \u5E94\u7528\uFF0C\u4FDD\u7559\u5171\u4EAB\u767B\u5F55\u65B9\u5F0F\u3002\u8BF7\u5148\u505C\u7528\u5165\u53E3\u5E76\u586B\u5199 API Token\u3002"),
           button("\u5220\u9664\u914D\u7F6E\u2026", async () => {
             const confirmed = window.prompt(`\u5C06\u5220\u9664 ${d.hostname} \u7684\u8FDC\u7A0B\u8BBF\u95EE\u914D\u7F6E\u3002\u8F93\u5165\u5B8C\u6574\u57DF\u540D\u786E\u8BA4\uFF1A`);
             if (confirmed !== d.hostname) return;

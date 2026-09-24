@@ -26,7 +26,7 @@ function fail(code, message, status = 400) {
   throw new UserError(code, message, status);
 }
 function publicError(error) {
-  return error instanceof UserError ? { code: error.code, message: error.message } : { code: "INTERNAL", message: "\u64CD\u4F5C\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u672C\u673A\u670D\u52A1\u72B6\u6001\u540E\u91CD\u8BD5\u3002\u5185\u90E8\u5F02\u5E38\u548C\u51ED\u636E\u4E0D\u4F1A\u8FD4\u56DE\u6D4F\u89C8\u5668\u3002" };
+  return error instanceof UserError ? { code: error.code, message: error.message } : { code: "INTERNAL", message: "\u64CD\u4F5C\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5 Harness \u4E3B\u673A\u4E0A\u7684\u670D\u52A1\u72B6\u6001\u3002" };
 }
 function validateSetup(input) {
   if (!input || typeof input !== "object") fail("INPUT", "\u914D\u7F6E\u683C\u5F0F\u9519\u8BEF\u3002");
@@ -35,11 +35,11 @@ function validateSetup(input) {
   if (typeof p.hostname !== "string") fail("HOSTNAME", "\u8BF7\u586B\u5199\u5B50\u57DF\u540D\u3002");
   const hostname = p.hostname.trim().toLowerCase();
   if (hostname.length > 253 || !hostname.includes(".") || !hostname.split(".").every((x) => /^(?!-)[a-z0-9-]{1,63}(?<!-)$/.test(x))) fail("HOSTNAME", "\u8BF7\u586B\u5199\u5B8C\u6574\u5B50\u57DF\u540D\uFF0C\u4E0D\u8981\u5305\u542B\u534F\u8BAE\u3001\u8DEF\u5F84\u3001\u7AEF\u53E3\u6216\u901A\u914D\u7B26\u3002");
-  if (!Array.isArray(p.emails) || p.emails.length < 1 || p.emails.length > 50 || !p.emails.every((x) => typeof x === "string" && /^[^\s@*]+@[^\s@*]+\.[^\s@*]+$/.test(x))) fail("EMAILS", "\u81F3\u5C11\u586B\u5199\u4E00\u4E2A\u660E\u786E\u7684\u5141\u8BB8\u90AE\u7BB1\uFF0C\u4E0D\u63A5\u53D7\u901A\u914D\u7B26\u3002");
+  if (!Array.isArray(p.emails) || p.emails.length < 1 || p.emails.length > 50 || !p.emails.every((x) => typeof x === "string" && /^[^\s@*]+@[^\s@*]+\.[^\s@*]+$/.test(x))) fail("EMAILS", "\u8BF7\u586B\u5199 1\u201350 \u4E2A\u6709\u6548\u90AE\u7BB1\uFF0C\u4E0D\u652F\u6301\u901A\u914D\u7B26\u3002");
   const emails = [...new Set(p.emails.map((x) => x.toLowerCase()))].sort();
   if (typeof p.identityProvider !== "string" || !/^(otp|[a-zA-Z0-9-]{1,80})$/.test(p.identityProvider)) fail("IDP", "\u8BF7\u9009\u62E9\u767B\u5F55\u65B9\u5F0F\u3002");
   const postureChecks = p.postureChecks ?? [];
-  if (!Array.isArray(postureChecks) || postureChecks.length > 10 || !postureChecks.every((x) => typeof x === "string" && /^[a-zA-Z0-9-]{1,80}$/.test(x))) fail("POSTURE", "\u8BBE\u5907\u68C0\u67E5 ID \u683C\u5F0F\u4E0D\u6B63\u786E\u3002");
+  if (!Array.isArray(postureChecks) || postureChecks.length > 10 || !postureChecks.every((x) => typeof x === "string" && /^[a-zA-Z0-9-]{1,80}$/.test(x))) fail("POSTURE", "\u6700\u591A\u586B\u5199 10 \u4E2A\u8BBE\u5907\u68C0\u67E5 ID\uFF0C\u6BCF\u4E2A ID \u4EC5\u652F\u6301\u5B57\u6BCD\u3001\u6570\u5B57\u548C\u8FDE\u5B57\u7B26\uFF0C\u957F\u5EA6\u4E3A 1\u201380 \u4E2A\u5B57\u7B26\u3002");
   return { accountId: p.accountId, zoneId: p.zoneId, hostname, emails, identityProvider: p.identityProvider, postureChecks: [...new Set(postureChecks)].sort() };
 }
 function sameSetup(a, b) {
@@ -72,7 +72,7 @@ var Cloudflare = class {
         redirect: "error"
       });
     } catch {
-      throw new UserError("CF_NETWORK", "Cloudflare \u8BF7\u6C42\u672A\u5B8C\u6210\u3002\u5199\u5165\u7ED3\u679C\u53EF\u80FD\u4E0D\u786E\u5B9A\uFF0C\u8BF7\u91CD\u65B0\u68C0\u67E5\u540E\u6062\u590D\uFF0C\u4E0D\u8981\u91CD\u590D\u521B\u5EFA\u3002", 502);
+      throw new UserError("CF_NETWORK", "Cloudflare \u8BF7\u6C42\u4E2D\u65AD\uFF0C\u64CD\u4F5C\u7ED3\u679C\u5C1A\u672A\u786E\u8BA4\u3002\u8BF7\u5148\u6838\u5BF9\u4E91\u7AEF\u8D44\u6E90\uFF0C\u518D\u91CD\u65B0\u68C0\u67E5\u914D\u7F6E\u3002", 502);
     }
     let data;
     try {
@@ -97,7 +97,7 @@ var Cloudflare = class {
       rows.push(...data.result);
       if (data.result_info?.total_pages !== void 0 ? page >= data.result_info.total_pages : data.result.length < 50) return rows;
     }
-    fail("CF_PAGINATION", "Cloudflare \u5217\u8868\u8FC7\u5927\uFF0C\u65E0\u6CD5\u5B89\u5168\u786E\u8BA4\u8D44\u6E90\u51B2\u7A81\uFF1B\u5DF2\u505C\u6B62\u3002");
+    fail("CF_PAGINATION", "Cloudflare \u8D44\u6E90\u6570\u91CF\u8D85\u51FA\u68C0\u67E5\u8303\u56F4\uFF0C\u65E0\u6CD5\u786E\u8BA4\u662F\u5426\u5B58\u5728\u51B2\u7A81\u3002\u64CD\u4F5C\u5DF2\u505C\u6B62\u3002");
   }
 };
 function applicationMatches(app, hostname) {
@@ -210,10 +210,10 @@ var Connector = class {
     if (!["darwin", "linux"].includes(platform) || !["arm64", "x64"].includes(arch)) fail("PLATFORM", "\u81EA\u52A8\u5B89\u88C5\u6682\u652F\u6301 macOS/Linux \u7684 arm64 \u548C x64\uFF1B\u8BF7\u624B\u52A8\u6307\u5B9A\u5B98\u65B9 cloudflared \u8DEF\u5F84\u3002");
     const assetName = `cloudflared-${platform}-${arch === "x64" ? "amd64" : arch}${platform === "darwin" ? ".tgz" : ""}`;
     const response = await fetch(`https://api.github.com/repos/cloudflare/cloudflared/releases/tags/${CLOUDFLARED_VERSION}`, { signal: AbortSignal.timeout(2e4) });
-    if (!response.ok) fail("DOWNLOAD", "\u65E0\u6CD5\u8BFB\u53D6\u5B98\u65B9\u53D1\u5E03\u4FE1\u606F\uFF0C\u8BF7\u901A\u8FC7\u7CFB\u7EDF\u4EE3\u7406\u91CD\u8BD5\u6216\u624B\u52A8\u5B89\u88C5 cloudflared\u3002");
+    if (!response.ok) fail("DOWNLOAD", "\u65E0\u6CD5\u8BFB\u53D6 cloudflared \u53D1\u5E03\u4FE1\u606F\uFF0C\u8BF7\u68C0\u67E5\u7F51\u7EDC\u6216\u624B\u52A8\u5B89\u88C5\u3002");
     const release = await response.json();
     const asset = release.assets.find((x) => x.name === assetName);
-    if (release.tag_name !== CLOUDFLARED_VERSION || !asset || !/^sha256:[a-f0-9]{64}$/.test(asset.digest ?? "") || asset.browser_download_url !== `https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/${assetName}`) fail("CHECKSUM", "\u5B98\u65B9\u53D1\u5E03\u7F3A\u5C11\u53EF\u9A8C\u8BC1\u7684 SHA-256\uFF0C\u5DF2\u505C\u6B62\u5B89\u88C5\u3002");
+    if (release.tag_name !== CLOUDFLARED_VERSION || !asset || !/^sha256:[a-f0-9]{64}$/.test(asset.digest ?? "") || asset.browser_download_url !== `https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/${assetName}`) fail("CHECKSUM", "cloudflared \u53D1\u5E03\u4FE1\u606F\u4E0D\u7B26\u5408\u9884\u671F\u6216\u7F3A\u5C11 SHA-256 \u6821\u9A8C\u503C\uFF0C\u5B89\u88C5\u5DF2\u505C\u6B62\u3002");
     const download = await fetch(asset.browser_download_url, { signal: AbortSignal.timeout(12e4) });
     if (!download.ok || !download.body) fail("DOWNLOAD", "\u5B98\u65B9\u8FDE\u63A5\u5668\u4E0B\u8F7D\u5931\u8D25\u3002");
     const chunks = [];
@@ -741,7 +741,7 @@ var Gateway = class {
       if (response.statusCode === 401) {
         this.options.native.reset();
         response.resume();
-        json(res, 503, { error: "\u672C\u673A\u4F1A\u8BDD\u5DF2\u66F4\u65B0\uFF0C\u8BF7\u91CD\u8BD5\u3002\u8BF7\u6C42\u672A\u88AB\u81EA\u52A8\u91CD\u653E\u3002" });
+        json(res, 503, { error: "\u672C\u673A\u4F1A\u8BDD\u5DF2\u66F4\u65B0\uFF0C\u672C\u6B21\u8BF7\u6C42\u672A\u91CD\u8BD5\u3002\u8BF7\u786E\u8BA4\u64CD\u4F5C\u7ED3\u679C\u540E\u518D\u8BD5\u3002" });
         return;
       }
       const headers = clean(response.headers);
@@ -886,7 +886,7 @@ var Provisioner = class {
   async preview(api, raw) {
     const setup = validateSetup(raw), a = `/accounts/${setup.accountId}`;
     const existing = this.store.state.deployment;
-    if (existing && !sameSetup(existing, setup)) fail("EXISTING_DEPLOYMENT", "\u672C\u5B9E\u4F8B\u5DF2\u6709\u90E8\u7F72\u3002\u4E3A\u907F\u514D\u8986\u76D6\uFF0C\u8BF7\u5148\u505C\u7528\u5E76\u6E05\u7406\u672C\u63D2\u4EF6\u521B\u5EFA\u7684\u8D44\u6E90\uFF0C\u6216\u4F7F\u7528\u72EC\u7ACB\u914D\u7F6E\u76EE\u5F55\u3002");
+    if (existing && !sameSetup(existing, setup)) fail("EXISTING_DEPLOYMENT", "\u672C\u5B9E\u4F8B\u5DF2\u6709\u4E0D\u540C\u914D\u7F6E\u3002\u8BF7\u5148\u505C\u7528\u5E76\u5220\u9664\u539F\u8BBF\u95EE\u914D\u7F6E\uFF0C\u6216\u4F7F\u7528\u72EC\u7ACB\u914D\u7F6E\u76EE\u5F55\u3002");
     const [zone, org, providers, apps, dns, tunnels] = await Promise.all([
       api.request("GET", `/zones/${setup.zoneId}`),
       api.request("GET", `${a}/access/organizations`),
@@ -895,7 +895,7 @@ var Provisioner = class {
       api.list(`/zones/${setup.zoneId}/dns_records?name=${encodeURIComponent(setup.hostname)}`),
       api.list(`${a}/cfd_tunnel?is_deleted=false&name=${encodeURIComponent(this.marker)}`)
     ]);
-    if (zone.account.id !== setup.accountId || !setup.hostname.endsWith(`.${zone.name}`)) fail("ZONE", "\u5FC5\u987B\u9009\u62E9\u8BE5\u8D26\u53F7\u4E0B\u7684\u5B50\u57DF\u540D\uFF0C\u4E0D\u80FD\u8986\u76D6\u6839\u57DF\u540D\u3002");
+    if (zone.account.id !== setup.accountId || !setup.hostname.endsWith(`.${zone.name}`)) fail("ZONE", "\u8BBF\u95EE\u57DF\u540D\u5FC5\u987B\u662F\u6240\u9009\u8D26\u53F7\u548C\u57DF\u540D\u4E0B\u7684\u5B50\u57DF\u540D\uFF0C\u4E0D\u652F\u6301\u6839\u57DF\u540D\u3002");
     for (const app of apps) if (applicationMatches(app, setup.hostname) && (!this.ownsApp(app) || app.domain !== setup.hostname || app.type !== "self_hosted")) fail("APP_CONFLICT", "\u8BE5\u57DF\u540D\u5DF2\u6709 Access \u5E94\u7528\uFF08\u5305\u62EC\u901A\u914D\u7B26\u6216\u8DEF\u5F84\u5E94\u7528\uFF09\uFF1B\u4E0D\u4F1A\u8986\u76D6\uFF0C\u8BF7\u9009\u62E9\u65B0\u5B50\u57DF\u540D\u3002");
     if (apps.some((app) => this.ownsApp(app) && (app.domain !== setup.hostname || app.type !== "self_hosted"))) fail("OWNERSHIP", "\u672C\u63D2\u4EF6\u7684 Access \u5E94\u7528\u5DF2\u88AB\u4FEE\u6539\uFF0C\u8BF7\u5148\u4EBA\u5DE5\u6838\u5BF9\uFF0C\u4E0D\u4F1A\u53E6\u5EFA\u540C\u540D\u8D44\u6E90\u3002");
     if (tunnels.some((t) => t.config_src !== "cloudflare")) fail("TUNNEL_MODE", "\u672C\u63D2\u4EF6\u7684 Tunnel \u914D\u7F6E\u6A21\u5F0F\u4E0D\u4E00\u81F4\uFF0C\u62D2\u7EDD\u8986\u76D6\u3002");
@@ -905,7 +905,7 @@ var Provisioner = class {
     if (!idp && setup.identityProvider !== "otp") fail("IDP", "\u6240\u9009\u767B\u5F55\u65B9\u5F0F\u4E0D\u5B58\u5728\u6216\u5DF2\u88AB\u79FB\u9664\u3002");
     if (setup.postureChecks.length) {
       const available = await api.list(`${a}/devices/posture`);
-      if (setup.postureChecks.some((id) => !available.some((x) => x.id === id))) fail("POSTURE", "\u8BBE\u5907\u68C0\u67E5\u4E0D\u5B58\u5728\uFF1B\u4E0D\u4F1A\u964D\u7EA7\u4E3A\u4EC5\u8EAB\u4EFD\u8BA4\u8BC1\u3002");
+      if (setup.postureChecks.some((id) => !available.some((x) => x.id === id))) fail("POSTURE", "\u8BBE\u5907\u68C0\u67E5\u4E0D\u5B58\u5728\uFF0C\u8BF7\u6838\u5BF9 Cloudflare Zero Trust \u4E2D\u7684\u68C0\u67E5 ID\u3002\u914D\u7F6E\u5DF2\u505C\u6B62\u3002");
     }
     return { setup, authDomain: authDomain(org.auth_domain), zoneName: zone.name, idpId: idp?.id, createOtp: !idp, resume: !!existing };
   }
@@ -962,7 +962,7 @@ var Provisioner = class {
     };
     const policies = await api.list(`${a}/access/apps/${app.id}/policies`);
     let policy = policies[0];
-    if (policies.length > 1 || policy && !policyMatches(policy, expected)) fail("POLICY_DRIFT", "Access \u7B56\u7565\u4E0E\u9884\u89C8\u4E0D\u4E00\u81F4\uFF1B\u4E0D\u4F1A\u8986\u76D6\u6216\u653E\u5BBD\u5DF2\u6709\u7B56\u7565\u3002");
+    if (policies.length > 1 || policy && !policyMatches(policy, expected)) fail("POLICY_DRIFT", "Access \u7B56\u7565\u4E0E\u5DF2\u786E\u8BA4\u7684\u914D\u7F6E\u4E0D\u4E00\u81F4\u3002\u64CD\u4F5C\u5DF2\u505C\u6B62\uFF0C\u73B0\u6709\u7B56\u7565\u672A\u4FEE\u6539\u3002");
     if (!policy) policy = await api.request("POST", `${a}/access/apps/${app.id}/policies`, expected);
     d.policyId = policy.id;
     await this.store.save();
@@ -1002,7 +1002,7 @@ var Provisioner = class {
   /** Caller must stop local serving first. Only recorded, verified owned resources. */
   async cleanup(api, confirmedHostname) {
     const d = this.store.state.deployment;
-    if (!d || confirmedHostname !== d.hostname) fail("CONFIRM", "\u8BF7\u5B8C\u6574\u8F93\u5165\u5F53\u524D\u57DF\u540D\u786E\u8BA4\u6E05\u7406\u3002");
+    if (!d || confirmedHostname !== d.hostname) fail("CONFIRM", "\u8BF7\u5B8C\u6574\u8F93\u5165\u5F53\u524D\u8BBF\u95EE\u57DF\u540D\u4EE5\u786E\u8BA4\u5220\u9664\u3002");
     if (this.store.state.enabled) fail("RUNNING", "\u8BF7\u5148\u505C\u7528\u8FDC\u7A0B\u5165\u53E3\u3002");
     const a = `/accounts/${d.accountId}`, z2 = `/zones/${d.zoneId}`;
     const apps = (await api.list(`${a}/access/apps`)).filter((x) => this.ownsApp(x));
@@ -1064,7 +1064,7 @@ var Controller = class {
   }
   async execute(action, body2) {
     if (this.disposed) fail("DISPOSED", "\u63D2\u4EF6\u6B63\u5728\u505C\u6B62\u3002", 503);
-    if (this.busy) fail("BUSY", "\u53E6\u4E00\u4E2A\u64CD\u4F5C\u6B63\u5728\u8FDB\u884C\uFF0C\u8BF7\u7A0D\u540E\u3002", 409);
+    if (this.busy) fail("BUSY", "\u5DF2\u6709\u64CD\u4F5C\u6B63\u5728\u6267\u884C\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002", 409);
     this.busy = true;
     this.current = this.dispatch(action, body2);
     try {
@@ -1096,9 +1096,9 @@ var Controller = class {
       }
       case "provision": {
         const plan = this.plan;
-        if (!plan || plan.id !== body2.planId || plan.expires < Date.now() || body2.hostname !== plan.preview.setup.hostname) fail("PLAN", "\u9884\u89C8\u5DF2\u8FC7\u671F\u6216\u672A\u786E\u8BA4\u57DF\u540D\uFF0C\u8BF7\u91CD\u65B0\u9884\u89C8\u3002");
+        if (!plan || plan.id !== body2.planId || plan.expires < Date.now() || body2.hostname !== plan.preview.setup.hostname) fail("PLAN", "\u914D\u7F6E\u68C0\u67E5\u5DF2\u5931\u6548\u6216\u786E\u8BA4\u57DF\u540D\u4E0D\u5339\u914D\uFF0C\u8BF7\u91CD\u65B0\u68C0\u67E5\u914D\u7F6E\u3002");
         this.clearPlan();
-        if (this.gateway) fail("RUNNING", "\u8BF7\u5148\u505C\u7528\u5165\u53E3\u3002");
+        if (this.gateway) fail("RUNNING", "\u8BF7\u5148\u505C\u7528\u8FDC\u7A0B\u5165\u53E3\u3002");
         if (!await this.connector.executable()) fail("CONNECTOR_MISSING", "\u8BF7\u5148\u5B89\u88C5\u5B98\u65B9 cloudflared\uFF0C\u518D\u53D1\u5E03\u3002");
         await this.provisioner.provision(plan.api, plan.preview);
         await this.start();
@@ -1130,7 +1130,7 @@ var Controller = class {
     const d = this.store.state.deployment;
     if (this.store.state.phase !== "configured" || !d?.dnsId || !d.audience) fail("NOT_CONFIGURED", "\u8BF7\u5148\u5B8C\u6210\u90E8\u7F72\u914D\u7F6E\u3002");
     const token = await this.vault.get();
-    if (!token) fail("CREDENTIAL", "Tunnel \u8FD0\u884C\u51ED\u636E\u4E22\u5931\uFF0C\u8BF7\u4F7F\u7528\u539F\u914D\u7F6E\u91CD\u65B0\u9884\u89C8\u5E76\u6062\u590D\u3002");
+    if (!token) fail("CREDENTIAL", "Tunnel \u51ED\u636E\u7F3A\u5931\uFF0C\u8BF7\u4F7F\u7528\u539F\u914D\u7F6E\u91CD\u65B0\u68C0\u67E5\u5E76\u53D1\u5E03\u3002");
     const gateway = new Gateway({ deployment: d, native: this.native, maxTokenAgeSeconds: this.maxTokenAgeSeconds });
     try {
       await gateway.start();
@@ -1187,8 +1187,8 @@ async function body(req) {
 }
 async function apply(ctx, config) {
   if (!/^[a-z0-9-]{1,40}$/.test(config.instance)) fail("INSTANCE", "instance \u4EC5\u652F\u6301\u5C0F\u5199\u5B57\u6BCD\u3001\u6570\u5B57\u548C\u8FDE\u5B57\u7B26\u3002");
-  if (ctx.webServer.host !== "127.0.0.1") fail("BIND", "\u4F7F\u7528 Cloudflare \u63D2\u4EF6\u65F6\uFF0C\u5B98\u65B9 webServer \u5FC5\u987B\u4EC5\u76D1\u542C 127.0.0.1\u3002");
-  if (config.gatewayPort === ctx.webServer.port) fail("PORT", "\u5165\u53E3\u7AEF\u53E3\u4E0D\u80FD\u4E0E Harness \u7AEF\u53E3\u76F8\u540C\u3002");
+  if (ctx.webServer.host !== "127.0.0.1") fail("BIND", "Harness \u5FC5\u987B\u4EC5\u76D1\u542C 127.0.0.1\uFF0C\u8BF7\u4F7F\u7528 --host 127.0.0.1 \u542F\u52A8\u3002");
+  if (config.gatewayPort === ctx.webServer.port) fail("PORT", "\u7F51\u5173\u7AEF\u53E3\u4E0D\u80FD\u4E0E Harness \u7AEF\u53E3\u76F8\u540C\u3002");
   const directory = config.dataDir ?? join3(process.env.DSH_HOME ?? join3(homedir2(), ".dsh"), "dsh-cloudflare-access", config.instance);
   if (!isAbsolute(directory) || config.cloudflaredPath && !isAbsolute(config.cloudflaredPath)) fail("PATH", "\u8BF7\u4F7F\u7528\u7EDD\u5BF9\u8DEF\u5F84\u3002");
   await mkdir2(directory, { recursive: true, mode: 448 });
@@ -1217,7 +1217,7 @@ async function apply(ctx, config) {
   }
   ctx.effect(() => ctx.webServer.register({ kind: "prefix", path: PREFIX, handler: async (req, res) => {
     if (!localAdmin(req, ctx.webServer.port, !ctx.connection.requestRejection(req))) {
-      json(res, 403, { error: "Cloudflare \u914D\u7F6E\u4EC5\u5141\u8BB8\u672C\u673A\u5DF2\u8BA4\u8BC1\u6D4F\u89C8\u5668\u8BBF\u95EE\u3002" });
+      json(res, 403, { error: "\u8BF7\u901A\u8FC7 Harness \u4E3B\u673A\u4E0A\u7684\u672C\u673A\u542F\u52A8\u94FE\u63A5\u8BBF\u95EE Cloudflare \u914D\u7F6E\u3002" });
       return;
     }
     try {

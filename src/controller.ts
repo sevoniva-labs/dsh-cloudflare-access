@@ -34,7 +34,7 @@ export class Controller {
   }
   async execute(action: string, body: Record<string, unknown>): Promise<unknown> {
     if (this.disposed) fail('DISPOSED', '插件正在停止。', 503);
-    if (this.busy) fail('BUSY', '另一个操作正在进行，请稍后。', 409);
+    if (this.busy) fail('BUSY', '已有操作正在执行，请稍后重试。', 409);
     this.busy = true;
     this.current = this.dispatch(action, body);
     try { return await this.current; }
@@ -58,9 +58,9 @@ export class Controller {
       }
       case 'provision': {
         const plan = this.plan;
-        if (!plan || plan.id !== body.planId || plan.expires < Date.now() || body.hostname !== plan.preview.setup.hostname) fail('PLAN', '预览已过期或未确认域名，请重新预览。');
+        if (!plan || plan.id !== body.planId || plan.expires < Date.now() || body.hostname !== plan.preview.setup.hostname) fail('PLAN', '配置检查已失效或确认域名不匹配，请重新检查配置。');
         this.clearPlan();
-        if (this.gateway) fail('RUNNING', '请先停用入口。');
+        if (this.gateway) fail('RUNNING', '请先停用远程入口。');
         if (!await this.connector.executable()) fail('CONNECTOR_MISSING', '请先安装官方 cloudflared，再发布。');
         await this.provisioner.provision(plan.api, plan.preview);
         await this.start(); return this.status();
@@ -77,7 +77,7 @@ export class Controller {
     if (this.gateway) return;
     const d = this.store.state.deployment;
     if (this.store.state.phase !== 'configured' || !d?.dnsId || !d.audience) fail('NOT_CONFIGURED', '请先完成部署配置。');
-    const token = await this.vault.get(); if (!token) fail('CREDENTIAL', 'Tunnel 运行凭据丢失，请使用原配置重新预览并恢复。');
+    const token = await this.vault.get(); if (!token) fail('CREDENTIAL', 'Tunnel 凭据缺失，请使用原配置重新检查并发布。');
     const gateway = new Gateway({ deployment: d, native: this.native, maxTokenAgeSeconds: this.maxTokenAgeSeconds });
     try {
       await gateway.start(); this.gateway = gateway;

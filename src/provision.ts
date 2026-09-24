@@ -24,7 +24,7 @@ export class Provisioner {
   async preview(api: Cloudflare, raw: unknown): Promise<Preview> {
     const setup = validateSetup(raw), a = `/accounts/${setup.accountId}`;
     const existing = this.store.state.deployment;
-    if (existing && !sameSetup(existing, setup)) fail('EXISTING_DEPLOYMENT', '本实例已有部署。为避免覆盖，请先停用并清理本插件创建的资源，或使用独立配置目录。');
+    if (existing && !sameSetup(existing, setup)) fail('EXISTING_DEPLOYMENT', '本实例已有不同配置。请先停用并删除原访问配置，或使用独立配置目录。');
     const [zone, org, providers, apps, dns, tunnels] = await Promise.all([
       api.request<Row & { name: string; account: { id: string } }>('GET', `/zones/${setup.zoneId}`),
       api.request<{ auth_domain: string }>('GET', `${a}/access/organizations`),
@@ -32,7 +32,7 @@ export class Provisioner {
       api.list(`/zones/${setup.zoneId}/dns_records?name=${encodeURIComponent(setup.hostname)}`),
       api.list(`${a}/cfd_tunnel?is_deleted=false&name=${encodeURIComponent(this.marker)}`),
     ]);
-    if (zone.account.id !== setup.accountId || !setup.hostname.endsWith(`.${zone.name}`)) fail('ZONE', '必须选择该账号下的子域名，不能覆盖根域名。');
+    if (zone.account.id !== setup.accountId || !setup.hostname.endsWith(`.${zone.name}`)) fail('ZONE', '访问域名必须是所选账号和域名下的子域名，不支持根域名。');
     for (const app of apps) if (applicationMatches(app, setup.hostname) && (!this.ownsApp(app) || app.domain !== setup.hostname || app.type !== 'self_hosted')) fail('APP_CONFLICT', '该域名已有 Access 应用（包括通配符或路径应用）；不会覆盖，请选择新子域名。');
     if (apps.some(app => this.ownsApp(app) && (app.domain !== setup.hostname || app.type !== 'self_hosted'))) fail('OWNERSHIP', '本插件的 Access 应用已被修改，请先人工核对，不会另建同名资源。');
     if (tunnels.some(t => t.config_src !== 'cloudflare')) fail('TUNNEL_MODE', '本插件的 Tunnel 配置模式不一致，拒绝覆盖。');
@@ -42,7 +42,7 @@ export class Provisioner {
     if (!idp && setup.identityProvider !== 'otp') fail('IDP', '所选登录方式不存在或已被移除。');
     if (setup.postureChecks.length) {
       const available = await api.list(`${a}/devices/posture`);
-      if (setup.postureChecks.some(id => !available.some(x => x.id === id))) fail('POSTURE', '设备检查不存在；不会降级为仅身份认证。');
+      if (setup.postureChecks.some(id => !available.some(x => x.id === id))) fail('POSTURE', '设备检查不存在，请核对 Cloudflare Zero Trust 中的检查 ID。配置已停止。');
     }
     return { setup, authDomain: authDomain(org.auth_domain), zoneName: zone.name, idpId: idp?.id, createOtp: !idp, resume: !!existing };
   }
@@ -84,7 +84,7 @@ export class Provisioner {
     };
     const policies = await api.list(`${a}/access/apps/${app.id}/policies`);
     let policy = policies[0];
-    if (policies.length > 1 || (policy && !policyMatches(policy, expected))) fail('POLICY_DRIFT', 'Access 策略与预览不一致；不会覆盖或放宽已有策略。');
+    if (policies.length > 1 || (policy && !policyMatches(policy, expected))) fail('POLICY_DRIFT', 'Access 策略与已确认的配置不一致。操作已停止，现有策略未修改。');
     if (!policy) policy = await api.request<Row>('POST', `${a}/access/apps/${app.id}/policies`, expected);
     d.policyId = policy.id; await this.store.save();
     // A readable policy is required before a tunnel or public DNS is created.
@@ -113,7 +113,7 @@ export class Provisioner {
   /** Caller must stop local serving first. Only recorded, verified owned resources. */
   async cleanup(api: Cloudflare, confirmedHostname: string): Promise<void> {
     const d = this.store.state.deployment;
-    if (!d || confirmedHostname !== d.hostname) fail('CONFIRM', '请完整输入当前域名确认清理。');
+    if (!d || confirmedHostname !== d.hostname) fail('CONFIRM', '请完整输入当前访问域名以确认删除。');
     if (this.store.state.enabled) fail('RUNNING', '请先停用远程入口。');
     const a = `/accounts/${d.accountId}`, z = `/zones/${d.zoneId}`;
     // First reconcile uncertain writes using this installation's unique marker.

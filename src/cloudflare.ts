@@ -14,7 +14,7 @@ export class Cloudflare {
         method, headers: { authorization: `Bearer ${this.token}`, 'content-type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(20_000), redirect: 'error',
       });
-    } catch { throw new UserError('CF_NETWORK', 'Cloudflare 请求未完成。写入结果可能不确定，请重新检查后恢复，不要重复创建。', 502); }
+    } catch { throw new UserError('CF_NETWORK', 'Cloudflare 请求中断，操作结果尚未确认。请先核对云端资源，再重新检查配置。', 502); }
     let data: Envelope<T>;
     try { data = await response.json() as Envelope<T>; } catch { throw new UserError('CF_RESPONSE', 'Cloudflare 返回了无法解析的响应。', 502); }
     if (!response.ok || data.success !== true) {
@@ -32,7 +32,7 @@ export class Cloudflare {
       rows.push(...data.result);
       if (data.result_info?.total_pages !== undefined ? page >= data.result_info.total_pages : data.result.length < 50) return rows;
     }
-    fail('CF_PAGINATION', 'Cloudflare 列表过大，无法安全确认资源冲突；已停止。');
+    fail('CF_PAGINATION', 'Cloudflare 资源数量超出检查范围，无法确认是否存在冲突。操作已停止。');
   }
 }
 
