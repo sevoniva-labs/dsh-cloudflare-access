@@ -102,13 +102,13 @@ try {
   console.log('PASS browser: expired application session silently renews via protected callback');
 
   before = await connects(); mode = 'login'; await wake();
-  await page.getByRole('button', { name: '登录', exact: true }).waitFor({ timeout: 15_000 });
-  const opened = context.waitForEvent('page'); await page.getByRole('button', { name: '登录', exact: true }).click();
+  await page.getByRole('button', { name: '重新登录', exact: true }).waitFor({ timeout: 15_000 });
+  const opened = context.waitForEvent('page'); await page.getByRole('button', { name: '重新登录', exact: true }).click();
   const popup = await opened; await popup.getByRole('button', { name: 'Fixture sign in' }).click();
   await page.waitForFunction(n => window.connects > n, before); await assertPreserved();
   console.log('PASS browser: interactive login returns to the original page using nonce-bound notification');
 
-  mode = 'denied'; await wake(); await page.getByText('当前账号无访问权限。', { exact: true }).waitFor();
+  mode = 'denied'; await wake(); await page.getByText('访问验证未通过，请检查账号权限和设备状态。', { exact: true }).waitFor();
   assert.equal(await page.locator('iframe').count(), 0); await assertPreserved();
   console.log('PASS browser: denied access does not create an authentication redirect loop');
   mode = 'valid'; principal = 'different-fixture-owner'; await wake();

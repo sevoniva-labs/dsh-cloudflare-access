@@ -11,6 +11,13 @@ import { PREFIX } from '../src/model.ts';
 import { deployment, nativeHarness } from './fixtures.ts';
 import { MODELS_MODULE } from '../src/models-compat.ts';
 let native: Awaited<ReturnType<typeof nativeHarness>>, gateway: Gateway, port: number;
+const controlPaths = [
+  `${PREFIX}/status`, `${PREFIX}/provision`, '/%5f%5fdsh_cloudflare_access/status', '/something/../__dsh_cloudflare_access/status',
+  ...['%3f', '%3F', '%23'].flatMap(segment => [
+    `/${segment}/..${PREFIX}/status`, `/${segment}/%2e%2e${PREFIX}/status?check=1`, `/${segment}/a/../..${PREFIX}/provision`,
+  ]),
+  `/%2f..${PREFIX}/status`, `/x%2f..${PREFIX}/status`,
+];
 function http(path = '/', options: { method?: string; headers?: Record<string, string | undefined>; data?: unknown } = {}) {
   return new Promise<{ status: number; headers: IncomingHttpHeaders; text: string }>((resolve, reject) => {
     const headers: Record<string, string | undefined> = { host: deployment.hostname, 'cf-access-jwt-assertion': 'valid', ...options.headers };
@@ -141,7 +148,35 @@ describe('real official connection + protected loopback gateway', () => {
     expect(r.status).toBe(200); expect(JSON.parse(r.text)).toMatchObject({ body: { message: 'hello' }, cookie: true, cf: null, origin: `http://127.0.0.1:${native.port}` });
   });
   test('rejects mutation without same-origin', async () => { expect((await http('/api/echo', { method: 'POST', data: {} })).status).toBe(403); });
-  test.each([`${PREFIX}/status`, `${PREFIX}/provision`, '/%5f%5fdsh_cloudflare_access/status', '/something/../__dsh_cloudflare_access/status'])('does not expose local control path %s', async path => { expect((await http(path)).status).toBe(403); });
+  test.each(controlPaths)('does not expose local control path %s', async path => {
+    expect((await http(path)).status).toBe(403);
+    expect((await http(path, { method: 'POST', headers: { origin: `https://${deployment.hostname}` }, data: {} })).status).toBe(403);
+  });
+  test('preserves encoded filenames and combo queries; stamps upstream requests after header cleanup', async () => {
+    const remove = native.ctx.get('webServer')!.register({ kind: 'prefix', path: '/files', handler(req, res) {
+      res.end(JSON.stringify({ path: req.url, marker: req.headers['x-dsh-cloudflare-proxy'], local: localAdmin(req, native.port, !native.connection.requestRejection(req)) }));
+    } });
+    try {
+      for (const path of ['/files/a%23b', '/files/a%3fb', '/files/%E4%B8%AD.txt', '/files/??a.js,b.js&rev=123']) {
+        const response = await http(path, { headers: { 'x-dsh-cloudflare-proxy': 'spoofed', connection: 'x-dsh-cloudflare-proxy' } });
+        expect(response.status).toBe(200);
+        expect(JSON.parse(response.text)).toEqual({ path, marker: '1', local: false });
+      }
+    } finally { remove(); }
+    expect((await http('/bad%ZZ')).status).toBe(400);
+    expect((await http('/bad%5cpath')).status).toBe(400);
+  });
+  test('raw WebSocket targets cannot reach control routes or pass bootstrap tokens', async () => {
+    let hits = 0;
+    const remove = native.ctx.get('webServer')!.registerUpgrade({ path: PREFIX, handler(_req, socket) { hits++; socket.destroy(); } });
+    try {
+      for (const path of [...controlPaths, '/ws?token=private', '/bad%ZZ']) {
+        const response = await http(path, { headers: { origin: `https://${deployment.hostname}`, connection: 'Upgrade', upgrade: 'websocket' } });
+        expect(response.status).toBe(path.startsWith('/ws?') || path === '/bad%ZZ' ? 400 : 403);
+      }
+      expect(hits).toBe(0);
+    } finally { remove(); }
+  });
   test('does not pass launch query token to native server', async () => { expect((await http('/?token=anything')).status).toBe(400); });
   test('identity endpoint and local logout revoke the bearer session', async () => {
     expect(JSON.parse((await http(`${PREFIX}/session`)).text)).toMatchObject({ remote: true, email: 'owner@example.com' });
@@ -169,5 +204,5 @@ test('local administration requires loopback Host, cookie and write Origin; refu
   const req = { method: 'POST', socket: { remoteAddress: '127.0.0.1' }, headers: { host: '127.0.0.1:3333', origin: 'http://127.0.0.1:3333' } };
   expect(localAdmin(req as never, 3333, true)).toBe(true);
   expect(localAdmin(req as never, 3333, false)).toBe(false);
-  for (const header of [{ origin: 'https://evil.test' }, { 'cf-access-jwt-assertion': 'valid' }, { 'x-forwarded-for': '127.0.0.1' }, { host: 'evil.test' }]) expect(localAdmin({ ...req, headers: { ...req.headers, ...header } } as never, 3333, true)).toBe(false);
+  for (const header of [{ origin: 'https://evil.test' }, { 'cf-access-jwt-assertion': 'valid' }, { 'x-forwarded-for': '127.0.0.1' }, { 'x-dsh-cloudflare-proxy': '1' }, { 'x-dsh-cloudflare-proxy': '' }, { host: 'evil.test' }]) expect(localAdmin({ ...req, headers: { ...req.headers, ...header } } as never, 3333, true)).toBe(false);
 });

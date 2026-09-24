@@ -51,18 +51,20 @@ npm run test:browser:assets
 
 ## 发布
 
-推送 `v<version>` 标签后，`publish.yml` 自动完成测试、打包、npm 发布和 GitHub Release 创建。标签提交必须已合入 `main`，并与 `package.json`、`package-lock.json` 的版本一致。
+推送 `v<version>` 标签后，`publish.yml` 自动完成测试、打包、npm 发布和 GitHub Release 创建。标签提交必须是发布检查时的 `main` 最新提交，并与 `package.json`、`package-lock.json` 的版本一致。
 
 1. 更新版本、README 安装命令和截图链接。预发布版本采用 `alpha.N`、`beta.N` 或 `rc.N`，`publishConfig.tag` 应对应 `alpha`、`beta` 或 `rc`；稳定版本使用 `latest`。
 2. 运行 `npm run check`，提交源码及构建产物并推送 `main`。
-3. 创建并推送对应的 `v<version>` 标签。不要移动已发布的版本标签。
+3. 等待该提交的 CI 和 CodeQL（JavaScript/TypeScript、Actions）通过，处理未关闭的扫描告警，再创建并推送对应的 `v<version>` 标签。不要移动已发布的版本标签。
 4. 检查 Publish 工作流、npm 版本和 Release 附件。
 
 npm 使用 Trusted Publishing（OIDC），仅信任本仓库的 `publish.yml` 与 `npm-release` 环境。该环境只允许 `v*` 标签，不配置长期 npm Token。发布任务使用 GitHub 托管运行器，并附带 provenance 来源证明。
 
 测试与打包任务没有发布权限。npm 与 GitHub Release 使用同一安装包；发布后核对 npm 元数据和下载包的校验值。重复运行只接受完全相同的已发布版本，不覆盖不同内容，也不回退已有 dist-tag。
 
-失败后可在对应标签上手动运行 Publish 工作流。npm 已接受发布但尚未同步可见时，等待同步后重试，不要修改版本号掩盖未确认的结果。新包须先完成一次初始化发布，再配置 Trusted Publisher。
+CI 与发布检查包含完整依赖审计和 registry 签名验证；依赖安装不运行生命周期脚本。发布还要求同一提交已有两种语言的 CodeQL 结果，且 `main` 无未处理告警。检查失败或结果不可用时停止发布。误报须记录输入来源和权限边界依据，不通过停用规则规避告警。Dependabot 每周检查 npm 依赖与 Actions 更新。
+
+失败后，若 `main` 仍指向该标签提交，可手动重跑 Publish 工作流；不要把 `main` 回退到旧提交以绕过检查。npm 已接受发布但尚未同步可见时，等待同步后重试，不要修改版本号掩盖未确认的结果。新包须先完成一次初始化发布，再配置 Trusted Publisher。
 
 ## 提交检查
 

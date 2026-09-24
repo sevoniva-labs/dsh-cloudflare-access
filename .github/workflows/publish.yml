@@ -28,12 +28,34 @@ jobs:
         with:
           node-version: '22.23.1'
           package-manager-cache: false
-      - run: npm ci
+      - run: npm ci --ignore-scripts
+      - run: npm audit --audit-level=low --registry=https://registry.npmjs.org/
+      - run: npm audit signatures --registry=https://registry.npmjs.org/
       - run: npm run check
       - run: git diff --exit-code -- dist
 
+  security:
+    if: github.repository == 'sevoniva-labs/dsh-cloudflare-access' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      security-events: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22.23.1'
+          package-manager-cache: false
+      - name: Require reviewed CodeQL results for this commit
+        run: node --experimental-strip-types scripts/security-gate.ts
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   package:
-    needs: check
+    needs: [check, security]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

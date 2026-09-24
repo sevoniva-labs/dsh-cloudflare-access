@@ -49,9 +49,10 @@ export function json(res: ServerResponse, status: number, value: unknown): void 
   res.end(JSON.stringify(value));
 }
 export function loopback(address: string | undefined): boolean { return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'; }
+const proxyMarker = 'x-dsh-cloudflare-proxy';
 export function localAdmin(req: IncomingMessage, port: number, authenticated: boolean): boolean {
   if (!loopback(req.socket.remoteAddress) || !authenticated) return false;
-  if (Object.keys(req.headers).some(x => x.startsWith('cf-') || x.startsWith('x-forwarded-') || x === 'forwarded')) return false;
+  if (Object.keys(req.headers).some(x => x.startsWith('cf-') || x.startsWith('x-forwarded-') || x === 'forwarded' || x === proxyMarker)) return false;
   const host = req.headers.host;
   if (![`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`].includes(host ?? '')) return false;
   return req.method === 'GET' ? (!req.headers.origin || req.headers.origin === `http://${host}`) : req.headers.origin === `http://${host}`;
@@ -88,7 +89,7 @@ function clean(headers: IncomingHttpHeaders, websocket = false): IncomingHttpHea
   const nominated = String(headers.connection ?? '').split(',').map(x => x.trim().toLowerCase());
   const result: IncomingHttpHeaders = {};
   for (const [key, value] of Object.entries(headers)) {
-    if (hop.has(key) || nominated.includes(key) || key === 'cookie' || key === 'authorization' || key === 'set-cookie' || key === 'forwarded' || key.startsWith('cf-') || key.startsWith('x-forwarded-')) continue;
+    if (hop.has(key) || nominated.includes(key) || key === 'cookie' || key === 'authorization' || key === 'set-cookie' || key === 'forwarded' || key === proxyMarker || key.startsWith('cf-') || key.startsWith('x-forwarded-')) continue;
     result[key] = value;
   }
   if (websocket) { result.connection = 'Upgrade'; result.upgrade = 'websocket'; }
@@ -155,14 +156,19 @@ export class Gateway {
   }
   private path(req: IncomingMessage): string {
     if (!req.url?.startsWith('/') || req.url.startsWith('//')) throw new Error('path');
-    // Normalize encoded slashes and dot segments before excluding control paths.
-    const decoded = decodeURIComponent(req.url.split('?')[0]!);
+    // Match the native router's parsing order before checking decoded aliases.
+    const target = new URL(req.url, 'http://local.invalid');
+    if (target.origin !== 'http://local.invalid') throw new Error('path');
+    const decoded = decodeURIComponent(target.pathname);
     if (decoded.includes('\\')) throw new Error('path');
-    return new URL(decoded, 'http://local.invalid').pathname;
+    // The pathname setter preserves encoded ?/# as path data, not delimiters.
+    target.pathname = decoded;
+    return target.pathname;
   }
   private upstreamHeaders(req: IncomingMessage, cookie: string, ws = false): IncomingHttpHeaders {
     const headers = clean(req.headers, ws), host = `127.0.0.1:${this.options.native.port}`;
     headers.host = host; headers.origin = `http://${host}`; headers.cookie = cookie;
+    headers[proxyMarker] = '1';
     return headers;
   }
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -177,7 +183,8 @@ export class Gateway {
       } else json(res, failure.status, { code: failure.code, error: failure.error });
       return;
     }
-    const path = this.path(req);
+    let path: string;
+    try { path = this.path(req); } catch { json(res, 400, { error: '请求路径无效。' }); return; }
     if (path === `${PREFIX}/auth/complete` && req.method === 'GET') { authenticationComplete(req, res); return; }
     if (path === `${PREFIX}/session` && req.method === 'GET') { json(res, 200, { remote: true, email: id.email, expires: id.expires, deviceChecks: this.options.deployment.postureChecks.length }); return; }
     if (path === `${PREFIX}/lease` && req.method === 'POST') {
@@ -253,8 +260,10 @@ export class Gateway {
     socket.on('error', () => socket.destroy());
     let id: Identity;
     try { id = await this.identity(req, true); } catch { socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return; }
-    const path = this.path(req);
-    if (path === PREFIX || path.startsWith(`${PREFIX}/`)) { socket.destroy(); return; }
+    let path: string;
+    try { path = this.path(req); } catch { socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n'); return; }
+    if (path === PREFIX || path.startsWith(`${PREFIX}/`)) { socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return; }
+    if (new URL(req.url!, 'http://local.invalid').searchParams.has('token')) { socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n'); return; }
     const cookie = await this.options.native.get();
     const upstream = request({ agent: false, hostname: '127.0.0.1', port: this.options.native.port, path: req.url, method: 'GET', headers: this.upstreamHeaders(req, cookie, true) });
     upstream.on('upgrade', (response, upstreamSocket, upstreamHead) => {

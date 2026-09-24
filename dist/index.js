@@ -527,9 +527,10 @@ function json(res, status, value) {
 function loopback(address) {
   return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
 }
+var proxyMarker = "x-dsh-cloudflare-proxy";
 function localAdmin(req, port, authenticated) {
   if (!loopback(req.socket.remoteAddress) || !authenticated) return false;
-  if (Object.keys(req.headers).some((x) => x.startsWith("cf-") || x.startsWith("x-forwarded-") || x === "forwarded")) return false;
+  if (Object.keys(req.headers).some((x) => x.startsWith("cf-") || x.startsWith("x-forwarded-") || x === "forwarded" || x === proxyMarker)) return false;
   const host = req.headers.host;
   if (![`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`].includes(host ?? "")) return false;
   return req.method === "GET" ? !req.headers.origin || req.headers.origin === `http://${host}` : req.headers.origin === `http://${host}`;
@@ -581,7 +582,7 @@ function clean(headers, websocket = false) {
   const nominated = String(headers.connection ?? "").split(",").map((x) => x.trim().toLowerCase());
   const result = {};
   for (const [key, value] of Object.entries(headers)) {
-    if (hop.has(key) || nominated.includes(key) || key === "cookie" || key === "authorization" || key === "set-cookie" || key === "forwarded" || key.startsWith("cf-") || key.startsWith("x-forwarded-")) continue;
+    if (hop.has(key) || nominated.includes(key) || key === "cookie" || key === "authorization" || key === "set-cookie" || key === "forwarded" || key === proxyMarker || key.startsWith("cf-") || key.startsWith("x-forwarded-")) continue;
     result[key] = value;
   }
   if (websocket) {
@@ -669,15 +670,19 @@ var Gateway = class {
   }
   path(req) {
     if (!req.url?.startsWith("/") || req.url.startsWith("//")) throw new Error("path");
-    const decoded = decodeURIComponent(req.url.split("?")[0]);
+    const target = new URL(req.url, "http://local.invalid");
+    if (target.origin !== "http://local.invalid") throw new Error("path");
+    const decoded = decodeURIComponent(target.pathname);
     if (decoded.includes("\\")) throw new Error("path");
-    return new URL(decoded, "http://local.invalid").pathname;
+    target.pathname = decoded;
+    return target.pathname;
   }
   upstreamHeaders(req, cookie, ws = false) {
     const headers = clean(req.headers, ws), host = `127.0.0.1:${this.options.native.port}`;
     headers.host = host;
     headers.origin = `http://${host}`;
     headers.cookie = cookie;
+    headers[proxyMarker] = "1";
     return headers;
   }
   async handle(req, res) {
@@ -692,7 +697,13 @@ var Gateway = class {
       } else json(res, failure.status, { code: failure.code, error: failure.error });
       return;
     }
-    const path = this.path(req);
+    let path;
+    try {
+      path = this.path(req);
+    } catch {
+      json(res, 400, { error: "\u8BF7\u6C42\u8DEF\u5F84\u65E0\u6548\u3002" });
+      return;
+    }
     if (path === `${PREFIX}/auth/complete` && req.method === "GET") {
       authenticationComplete(req, res);
       return;
@@ -816,9 +827,19 @@ var Gateway = class {
       socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
       return;
     }
-    const path = this.path(req);
+    let path;
+    try {
+      path = this.path(req);
+    } catch {
+      socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+      return;
+    }
     if (path === PREFIX || path.startsWith(`${PREFIX}/`)) {
-      socket.destroy();
+      socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+      return;
+    }
+    if (new URL(req.url, "http://local.invalid").searchParams.has("token")) {
+      socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
       return;
     }
     const cookie = await this.options.native.get();

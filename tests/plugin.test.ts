@@ -2,11 +2,13 @@ import { afterEach, beforeEach, expect, test } from 'vitest';
 import { mkdtemp, rm, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { request } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import type { Fiber } from '@deepseek-ai/cordis';
 import * as Plugin from '../src/index.ts';
 import { PREFIX } from '../src/model.ts';
-import { NativeSession } from '../src/gateway.ts';
-import { nativeHarness } from './fixtures.ts';
+import { Gateway, NativeSession } from '../src/gateway.ts';
+import { deployment, nativeHarness } from './fixtures.ts';
 let native: Awaited<ReturnType<typeof nativeHarness>>, directory: string, fiber: Fiber, cookie: string;
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'dsh-cloudflare-access-plugin-'));
@@ -22,6 +24,22 @@ test('native plugin registers authenticated local settings and survives restart'
 });
 test('unauthenticated browser cannot read admin status', async () => { expect((await call('status', undefined, { cookie: '' })).status).toBe(403); });
 test('forwarded request cannot configure even with a native browser cookie', async () => { expect((await call('discover', { token: 'test-secret-value' }, { 'cf-access-jwt-assertion': 'irrelevant' })).status).toBe(403); });
+test('actual local plugin rejects encoded remote routes and proxy-marked native requests', async () => {
+  const gateway = new Gateway({ deployment, native: new NativeSession(native.port, base => native.connection.authenticatedUrl(base)), verify: async () => ({ subject: 'owner', email: 'owner@example.com', expires: Date.now() + 60_000, fingerprint: 'fixture' }) });
+  await gateway.start();
+  try {
+    expect((await call('status')).status).toBe(200);
+    for (const marker of ['', '0', '1']) expect((await call('status', undefined, { 'x-dsh-cloudflare-proxy': marker })).status).toBe(403);
+    for (const segment of ['%3f', '%3F', '%23']) {
+      const status = await new Promise<number>((resolve, reject) => {
+        const req = request({ hostname: '127.0.0.1', port: (gateway.server.address() as AddressInfo).port, path: `/${segment}/..${PREFIX}/status`, headers: { host: deployment.hostname, 'cf-access-jwt-assertion': 'fixture' } }, res => { res.resume(); res.on('end', () => resolve(res.statusCode!)); });
+        req.on('error', reject); req.end();
+      });
+      expect(status).toBe(403);
+    }
+    expect((await call('status')).status).toBe(200);
+  } finally { await gateway.stop(); }
+});
 test('invalid Token error never writes the supplied secret to state', async () => {
   const response = await call('discover', { token: 'private token with whitespace' }); expect(response.status).toBe(400);
   const persisted = await readFile(join(directory, 'state.json'), 'utf8'); expect(persisted).not.toContain('private token'); expect((await stat(join(directory, 'state.json'))).mode & 0o777).toBe(0o600);
