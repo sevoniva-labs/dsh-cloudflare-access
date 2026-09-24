@@ -13,6 +13,19 @@ Cloudflare Zero Trust access for DSH: authenticate with Cloudflare Access and re
 
 For owners and trusted administrators only. Authorized users share the same Harness sessions, files, and tool permissions; there is no per-user isolation. This is an independent community plugin, not an official DeepSeek or Cloudflare product.
 
+## 界面预览
+
+以下截图使用实际插件设置组件，在独立演示页面中加载虚构数据；不是生产部署或 Cloudflare 认证成功的证明。
+
+![连接状态与设备验证配置](https://raw.githubusercontent.com/sevoniva-labs/dsh-cloudflare-access/v0.1.0-alpha.9/docs/images/connection-status.png)
+
+<details>
+<summary>访问设置与发布确认</summary>
+
+![访问设置与发布确认，域名、邮箱和设备检查均为示例](https://raw.githubusercontent.com/sevoniva-labs/dsh-cloudflare-access/v0.1.0-alpha.9/docs/images/access-setup.png)
+
+</details>
+
 ## 使用前提
 
 - 已安装官方 DSH `0.1.6-alpha.2`，使用 Node.js `22.19.0` 或更高版本。
@@ -25,9 +38,11 @@ For owners and trusted administrators only. Authorized users share the same Harn
 ## 安装与配置
 
 ```sh
-dsh plugin --profile web add github:sevoniva-labs/dsh-cloudflare-access
+dsh plugin --profile web add github:sevoniva-labs/dsh-cloudflare-access#v0.1.0-alpha.9
 dsh --profile web --host 127.0.0.1
 ```
+
+也可从 [Releases](https://github.com/sevoniva-labs/dsh-cloudflare-access/releases) 下载带构建产物的 `.tgz`，按同页 `SHA256SUMS.txt` 核对校验值后安装。本版本是预发布版本，不应视为稳定版。
 
 在主机上打开 DSH 输出的本机启动链接，进入 **设置 → Cloudflare 零信任接入**：
 
@@ -89,7 +104,7 @@ Harness 和插件网关都只监听 `127.0.0.1`，两者不能使用同一端口
 
 ## 更新与卸载
 
-更新时重新执行安装命令并重启 DSH。更新前保留旧安装包和私有状态备份；备份不得放入公开仓库。
+更新时先查看目标 Release 的兼容说明，将安装命令中的 tag 替换为目标版本，安装后重启 DSH。更新前保留旧安装包和私有状态备份；备份不得放入公开仓库。
 
 离线安装：
 
