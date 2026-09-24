@@ -16,3 +16,7 @@ artifacts/
 *.pfx
 browser-state*.json
 credentials*.json
+.cloudflared/
+*.runtime
+*.har
+*.gitbundle

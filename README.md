@@ -1,34 +1,40 @@
 # Cloudflare 零信任接入
 
-DeepSeek Harness 插件，通过 Cloudflare Access、Tunnel 和 DNS 提供远程访问。
+为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供基于 Cloudflare Access 和 Tunnel 的远程访问。主机无需公网 IP，也无需开放入站端口。
 
-- 包名：`@sevoniva/dsh-cloudflare-access`
-- 版本：`0.1.0-alpha.9`
-- 已验证兼容：官方 DSH `0.1.6-alpha.2`、Node.js 22
-- 平台：macOS、Linux；Windows 暂不支持自动安装连接器
+插件管理 Access 应用、访问策略、Tunnel 和 DNS，登录由 Cloudflare 处理，不另建用户账号。
 
-## 安装
+**仅适用于主机所有者和可信管理员。所有获准用户共享同一个 Harness 的会话、文件和工具权限，不提供用户隔离。**
+
+## 使用前提
+
+- 已安装官方 DSH `0.1.6-alpha.2`，使用 Node.js `22.19.0` 或更高版本。
+- Cloudflare 账号已初始化 Zero Trust，并托管要使用的域名。
+- 使用尚未配置 DNS 或 Access 应用的子域名，例如 `harness.example.com`。
+- Harness 主机能够连接 Cloudflare，远程使用期间保持运行。
+
+当前插件版本为 `0.1.0-alpha.9`，仍处于测试阶段。已在 macOS 上验证；Linux 的自动安装路径支持 arm64/x64，但尚未完成实际部署验证。Windows 暂未支持自动安装。其他 DSH 版本不在当前兼容范围内。
+
+## 安装与配置
 
 ```sh
 dsh plugin --profile web add github:sevoniva-labs/dsh-cloudflare-access
 dsh --profile web --host 127.0.0.1
 ```
 
-离线安装包也可通过 `dsh plugin --profile web add /absolute/path/package.tgz` 安装。
+在主机上打开 DSH 输出的本机启动链接，进入 **设置 → Cloudflare 零信任接入**：
 
-在本机打开 Harness 启动链接，进入 **设置 → Cloudflare 零信任接入**：
+1. 安装 cloudflared，或指定已有官方可执行文件的路径。
+2. 填写 Cloudflare API Token，选择域名、子域名和登录方式。
+3. 填写允许访问的邮箱。需要可信设备限制时，填写已有的设备检查 ID。
+4. 检查待创建资源，输入完整子域名确认发布。
+5. 等待隧道连接成功，再通过 HTTPS 域名登录。
 
-1. 安装或指定官方 cloudflared。
-2. 填写 API Token，选择域名、访问地址、允许邮箱和认证方式。
-3. 如需设备验证，填写已有设备检查 ID。
-4. 检查配置，输入访问地址确认发布。
-5. 隧道连接后，从其他设备登录并验证。
+API Token 仅用于配置操作，不持久保存。插件不会覆盖其他部署的 DNS、Access 应用或 Tunnel。设备检查必须预先在 Cloudflare Zero Trust 中配置；只设置邮箱白名单不代表启用了设备验证。
 
-Cloudflare 账号需已完成 Zero Trust 初始化，域名需由该账号托管。插件不会覆盖已有 DNS 或接管已有部署。
+### API Token 权限
 
-## API Token 权限
-
-将 Token 限定到目标账号和 Zone，不使用 Global API Key。
+将 Token 的资源范围限定到目标账号和 Zone，不使用 Global API Key。
 
 | 范围 | 权限 |
 | --- | --- |
@@ -36,16 +42,14 @@ Cloudflare 账号需已完成 Zero Trust 初始化，域名需由该账号托管
 | Account | Access: Apps and Policies: Edit |
 | Account | Access: Organizations, Identity Providers, and Groups: Read |
 | Zone | Zone: Read；DNS: Edit |
-| 可选 | 自动创建邮件验证码登录方式时，Identity Providers 需要 Edit |
-| 可选 | 使用设备检查时，需要 Access: Device Posture: Read |
+| 自动创建邮件验证码登录方式时 | Identity Providers: Edit |
+| 使用设备检查时 | Access: Device Posture: Read |
 
-名称以 [Cloudflare 权限表](https://developers.cloudflare.com/fundamentals/api/reference/permissions/) 为准。
+具体名称以 [Cloudflare API 权限表](https://developers.cloudflare.com/fundamentals/api/reference/permissions/) 为准。
 
-管理 Token 不保存，预览有效期为 10 分钟。Tunnel 运行凭据由 DSH 凭据服务保存；cloudflared 使用权限为 `0600` 的临时 Token 文件，不通过命令行参数传递凭据。
+### 本机配置
 
-## 配置
-
-默认 Harness 与插件入口均只监听本机。插件入口端口为 `3082`。可在 profile 的 `cordis.patch.yml` 中覆盖：
+可在所用 profile 的 `cordis.patch.yml` 中覆盖配置：
 
 ```yaml
 - id: dsh-cloudflare-access
@@ -53,76 +57,54 @@ Cloudflare 账号需已完成 Zero Trust 初始化，域名需由该账号托管
   config:
     instance: web
     gatewayPort: 3082
-    # maxTokenAgeSeconds: 7200
+    maxTokenAgeSeconds: 7200
     # cloudflaredPath: /absolute/path/to/cloudflared
     # dataDir: /absolute/path/to/private/state
 ```
 
-状态目录为 `$DSH_HOME/dsh-cloudflare-access/<instance>`。多个 profile 必须使用不同实例名和端口。
+Harness 和插件网关都只监听 `127.0.0.1`，两者不能使用同一端口。默认状态目录为 `$DSH_HOME/dsh-cloudflare-access/<instance>`；未设置 `DSH_HOME` 时使用 `~/.dsh`。多个实例必须使用不同的状态目录和网关端口。
 
-当前版本更换域名、端口或策略时，需先删除原部署再配置。插件随 DSH 启停，不自动注册系统服务。无人值守运行请使用 launchd 或 systemd 管理 DSH。
+插件随 DSH 启停，不安装系统服务。需要开机启动时，请自行通过 launchd 或 systemd 管理 DSH。
 
-目录选择使用 DSH 官方网页目录浏览器，选择的是 **Harness 主机上的目录**。
+## 远程使用
 
-## 访问边界
+访问链路：浏览器 → Cloudflare Access → Tunnel → 本机网关 → Harness。
 
-```text
-浏览器 → Cloudflare Access → Tunnel → 本机插件网关 → 官方 Harness
+- **文件目录**：浏览和选择的是 Harness 主机上的目录，不是访问设备上的目录。
+- **模型配置**：获准用户可在模型设置中管理提供方、模型和 API Key。数据保存到 Harness 原生设置与凭据服务。
+- **连接恢复**：网络恢复或页面重新激活后，插件检查认证状态并协调原生重连，不重新提交任务指令。
+- **登录过期**：优先尝试复用 Cloudflare 登录；无法静默恢复时，在登录窗口完成认证后返回原页面。
+- **静态缓存**：带版本的脚本和样式使用浏览器私有缓存。适配后的脚本重新验证内容，页面、认证响应和任务数据不缓存。
+
+新建 Access 应用的默认会话为一小时。网关另设凭据年龄上限，默认两小时；长连接受凭据到期时间和浏览器租约限制。修改会话时长不会消除重新认证的必要性，插件更新也不会放宽已有访问策略。
+
+远程模型编辑和连接提示使用针对 DSH `0.1.6-alpha.2` 的响应适配，不修改已安装的官方文件。未知脚本结构保持原样，因此升级 DSH 后需要重新验证这些功能。加载速度也取决于网络、已启用插件和会话数据，缓存不等于免除初始化。
+
+## 更新与卸载
+
+更新时重新执行安装命令并重启 DSH。更新前保留旧安装包和私有状态备份；备份不得放入公开仓库。
+
+离线安装：
+
+```sh
+dsh plugin --profile web add /absolute/path/plugin.tgz
 ```
 
-网关校验 Access JWT、邮箱、Host 和 Origin，同时保留官方 DSH 认证，不修改已安装的官方文件或替换连接模块。HTTP、SSE 和 WebSocket 使用同一认证入口。
+停用仅关闭本机入口和连接器，保留云端资源。完全卸载时：
 
-通过 Access 登录的管理员可在 **设置 → 模型** 添加和编辑提供方、模型与 API Key。保存使用 Harness 原生设置和凭据服务，保留版本冲突检查；Key 不写入插件配置。
-
-DSH `0.1.6-alpha.2` 的远程模型页需要兼容适配：网关仅在已认证响应中为模型页提供主机设置视图，不改变其他设置的持久化策略或连接的 `isLoopback` 状态。未知前端结构保持原样，升级 Harness 后应复核模型编辑功能。
-
-**获准用户共享 Harness 的数据与工具权限。此插件不是多租户隔离系统，只适用于可信管理员。** 配置页面仅在本机开放，但这不是对远程管理员的权限隔离。
-
-设备验证为可选项；仅配置邮箱认证不等于设备已获信任。设备检查需在 Cloudflare Zero Trust 中预先配置。
-
-长连接受 JWT 有效期及 90 秒浏览器租约限制。撤权仍受 Cloudflare 会话和策略传播影响，不保证即时断开。详情见 [安全说明](docs/security.md)。
-
-## 浏览器会话恢复
-
-网络恢复、标签页重新激活和认证凭据更新后，插件检查访问状态并调用 Harness 原生重连。不会重新加载任务页面或重发执行指令。
-
-远程页面由插件统一显示连接异常，不重复显示官方的短暂“连接成功”提示；未知版本的官方界面保持原样。带版本的脚本和样式允许浏览器私有缓存，兼容适配后的脚本按实际内容重新验证；页面、任务数据和认证响应不缓存，也不使用共享 CDN 缓存。
-
-应用凭据过期时，先尝试复用 Cloudflare 登录。浏览器限制第三方 Cookie、认证页面禁止嵌入，或全局登录已到期时，需要点击“登录”，在新窗口完成认证后返回原页面。原页面保留输入草稿；弹窗受限时需允许本站打开登录窗口。
-
-Access 应用默认会话为 1 小时。源站额外限制凭据年龄，`maxTokenAgeSeconds` 默认 7200 秒；长连接按 JWT 到期与年龄上限中较早的时间关闭。若管理员修改 Access 会话时长，应同时复核此上限。插件更新不会修改已有云端策略，也不会自动延长登录时间。
-
-## 停用、删除与更新
-
-- **停用**：关闭本机入口和连接器，保留云端配置。
-- **删除配置**：先停用，重新填写 API Token 并确认域名。仅删除本实例管理的 DNS、Tunnel 和 Access 应用，保留共享登录方式。
-- **卸载**：完成云端清理后运行下方命令。直接卸载不会自动删除 Cloudflare 资源。
+1. 在插件设置中停用入口。
+2. 重新填写 API Token，输入当前子域名并删除配置。插件只删除核对归属后的 DNS、Tunnel 和 Access 应用，共享登录方式保留。
+3. 删除成功后卸载插件：
 
 ```sh
 dsh plugin --profile web remove @sevoniva/dsh-cloudflare-access
 ```
 
-不要提前删除状态目录，其中保存资源归属与恢复记录。配置操作中断后，可使用原配置重新检查并恢复。
+直接卸载不会清理 Cloudflare 资源。不要提前删除状态目录，否则可能丢失资源归属信息。更换域名或访问策略时，当前版本需要先删除原部署再配置。
 
-更新插件可重新执行安装命令，然后重启 DSH。建议固定发布 tag/commit 并保留旧版本包。更新 DSH 前需检查兼容范围，不保证兼容未验证的新版本。
+## 开发与安全
 
-## 开发
+- [贡献指南](CONTRIBUTING.md)：构建、测试和提交要求。
+- [安全说明](SECURITY.md)：权限边界、凭据处理及问题报告。
 
-```sh
-npm ci
-npm run check
-npm pack
-```
-
-| 文件 | 职责 |
-| --- | --- |
-| `src/client.ts` | 设置页面 |
-| `src/session-recovery.ts` | 浏览器认证恢复与原生重连协调 |
-| `src/gateway.ts` | 身份校验与 HTTP/SSE/WS 代理 |
-| `src/provision.ts` | Cloudflare 资源创建、恢复与清理 |
-| `src/controller.ts` | 操作串行化与运行状态 |
-| `src/cloudflared.ts` | 连接器安装与进程管理 |
-
-`dist/` 随源码提交，GitHub 安装不需要本机编译。提交前执行 `npm run check` 并同步构建产物。测试范围与集成检查见 [测试与验收](docs/verification.md)。
-
-MIT License。非 DeepSeek 或 Cloudflare 官方产品。
+[MIT License](LICENSE)。本项目不是 DeepSeek 或 Cloudflare 官方产品。
