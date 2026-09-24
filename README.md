@@ -1,10 +1,17 @@
 # Cloudflare 零信任接入
 
+[![CI](https://github.com/sevoniva-labs/dsh-cloudflare-access/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sevoniva-labs/dsh-cloudflare-access/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Cloudflare Zero Trust access for DSH: authenticate with Cloudflare Access and reach your self-hosted Harness through Cloudflare Tunnel, without a public IP or inbound ports.
+
 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供基于 Cloudflare Access 和 Tunnel 的远程访问。主机无需公网 IP，也无需开放入站端口。
 
 插件管理 Access 应用、访问策略、Tunnel 和 DNS，登录由 Cloudflare 处理，不另建用户账号。
 
 **仅适用于主机所有者和可信管理员。所有获准用户共享同一个 Harness 的会话、文件和工具权限，不提供用户隔离。**
+
+For owners and trusted administrators only. Authorized users share the same Harness sessions, files, and tool permissions; there is no per-user isolation. This is an independent community plugin, not an official DeepSeek or Cloudflare product.
 
 ## 使用前提
 

@@ -1,7 +1,23 @@
 {
   "name": "@sevoniva/dsh-cloudflare-access",
   "version": "0.1.0-alpha.9",
-  "description": "Cloudflare 零信任接入 — Access authentication and Tunnel publishing for DeepSeek Harness",
+  "description": "Cloudflare Zero Trust access for DeepSeek Harness (DSH). Access 认证、Tunnel 与 DNS 配置，无需公网 IP。",
+  "keywords": [
+    "dsh-plugin",
+    "dsh",
+    "deepseek-harness",
+    "cloudflare",
+    "cloudflare-access",
+    "cloudflare-tunnel",
+    "cloudflare-zero-trust",
+    "remote-access",
+    "self-hosted",
+    "authentication"
+  ],
+  "homepage": "https://github.com/sevoniva-labs/dsh-cloudflare-access#readme",
+  "bugs": {
+    "url": "https://github.com/sevoniva-labs/dsh-cloudflare-access/issues"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "exports": {
