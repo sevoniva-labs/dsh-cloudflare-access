@@ -27,7 +27,10 @@ async function body(req: IncomingMessage): Promise<Record<string, unknown>> {
 export async function apply(ctx: Context, config: Config): Promise<void> {
   if (!/^[a-z0-9-]{1,40}$/.test(config.instance)) fail('INSTANCE', 'instance 仅支持小写字母、数字和连字符。');
   if (ctx.webServer.host !== '127.0.0.1') fail('BIND', 'Harness 必须仅监听 127.0.0.1，请使用 --host 127.0.0.1 启动。');
-  if (config.gatewayPort === ctx.webServer.port) fail('PORT', '网关端口不能与 Harness 端口相同。');
+  // 0.2.x reports the bound port as optional; this plugin needs a concrete one.
+  const hostPort = ctx.webServer.port;
+  if (hostPort === undefined) fail('BIND', 'Harness 的 web 服务尚未监听端口，无法确定本机地址。');
+  if (config.gatewayPort === hostPort) fail('PORT', '网关端口不能与 Harness 端口相同。');
   const directory = config.dataDir ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'dsh-cloudflare-access', config.instance);
   if (!isAbsolute(directory) || (config.cloudflaredPath && !isAbsolute(config.cloudflaredPath))) fail('PATH', '请使用绝对路径。');
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -43,13 +46,13 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     set: value => ctx.credentials.set(ref, value),
     get: async () => (await ctx.credentials.resolve(ref))?.value,
     clear: () => ctx.credentials.unset(ref),
-  }, new NativeSession(ctx.webServer.port, base => ctx.connection.authenticatedUrl(base)), config.gatewayPort, config.cloudflaredPath, config.maxTokenAgeSeconds);
+  }, new NativeSession(hostPort, base => ctx.connection.authenticatedUrl(base)), config.gatewayPort, config.cloudflaredPath, config.maxTokenAgeSeconds);
   const activeController = controller;
   ctx.effect(() => () => activeController.dispose(), 'cloudflare lifecycle');
   await controller.init();
   if (compromised) { await controller.dispose(); fail('INSTANCE_LOCK', '本机实例锁失效，入口已停止。'); }
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: PREFIX, handler: async (req, res) => {
-    if (!localAdmin(req, ctx.webServer.port, !ctx.connection.requestRejection(req))) { json(res, 403, { error: '请通过 Harness 主机上的本机启动链接访问 Cloudflare 配置。' }); return; }
+    if (!localAdmin(req, hostPort, !ctx.connection.requestRejection(req))) { json(res, 403, { error: '请通过 Harness 主机上的本机启动链接访问 Cloudflare 配置。' }); return; }
     try {
       const path = new URL(req.url!, 'http://local.invalid').pathname.slice(PREFIX.length);
       if (compromised) fail('INSTANCE_LOCK', '本机实例锁失效，入口已停止。', 503);

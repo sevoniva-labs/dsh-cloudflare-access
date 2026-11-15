@@ -1,9 +1,14 @@
-/** Model-page-only compatibility for Harness 0.1.6-alpha.2.
+/** Model-page-only compatibility for Harness 0.1.6-alpha.2 and 0.2.x.
  * Applied to authenticated gateway responses, never to installed Harness files.
  * Unknown bundle layouts stay unchanged (read-only).
  */
+import { moduleSection } from './bundle.ts';
+
 export const MODELS_MODULE = '@deepseek-ai/dsh-client-ui-settings-models';
-const anchor = 'new ModelsSettingsStore(ctx, schema, ctx.settingsScope.describe())';
+// 0.1.6 hands the controller a settings scope; 0.2.x hands it the shared
+// config-form service. Both expose the same describe face, so one replacement
+// serves both layouts; the minified 0.2.x bundle drops the spaces.
+export const MODELS_ANCHOR = /new ModelsSettingsStore\(\s*ctx\s*,\s*schema\s*,\s*ctx\.(?:settingsScope|configForms)\.describe\(\)\s*\)/;
 
 // The native editor already uses revisioned settings.mutate and credentials APIs.
 // Give only this controller a host describe face; all other settings keep their
@@ -50,15 +55,13 @@ export function modelsBundleRequest(url: string): boolean {
 }
 
 export function adaptModelsBundle(source: string): string {
-  const marker = `id: "${MODELS_MODULE}"`;
-  const start = source.indexOf(marker);
-  if (start < 0 || source.indexOf(marker, start + marker.length) >= 0) return source;
-  const next = source.indexOf('window.__ModuleLoader__.load(', start);
-  const end = next < 0 ? source.length : next;
-  const section = source.slice(start, end);
-  if (section.split(anchor).length !== 2 || !section.includes('function createModelsOperations(ctx)')) return source;
+  const found = moduleSection(source, MODELS_MODULE);
+  if (!found) return source;
+  const { start, end, section } = found;
+  // Exactly one store construction is rewritten; duplicates stay official.
+  if ((section.match(new RegExp(MODELS_ANCHOR.source, 'g')) ?? []).length !== 1 || !section.includes('createModelsOperations(')) return source;
   // Function source is self-contained and comes from this package, not a URL,
   // user input, or a runtime credential. No eval runs in the browser.
   const replacement = `new ModelsSettingsStore(ctx, schema, (${modelDescribeFace.toString()})(ctx))`;
-  return source.slice(0, start) + section.replace(anchor, replacement) + source.slice(end);
+  return source.slice(0, start) + section.replace(new RegExp(MODELS_ANCHOR.source), replacement) + source.slice(end);
 }

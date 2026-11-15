@@ -13,13 +13,15 @@ describe('model-scoped remote editor', () => {
     const adapted = adaptModelsBundle(source);
     expect(adapted).not.toBe(source);
     expect(() => new Script(adapted)).not.toThrow();
-    expect(adapted).toContain('ctx.settingsScope.bind(');
+    // Layout-independent: the store must now receive this package's describe face.
+    expect(adapted).toMatch(/new ModelsSettingsStore\(\s*ctx\s*,\s*schema\s*,\s*\(function modelDescribeFace/);
+    expect(adapted).toContain('ctx.remote.settings.describe()');
     expect(adapted).not.toContain('isLoopback =');
     expect(readFileSync(require.resolve(`${MODELS_MODULE}/client`), 'utf8')).toBe(source);
     expect(adaptModelsBundle(adapted)).toBe(adapted);
   });
   test('leaves unknown, duplicate and unrelated bundles untouched', () => {
-    const changed = source.replace('ModelsSettingsStore(ctx, schema,', 'DifferentStore(ctx, schema,');
+    const changed = source.replace(/ModelsSettingsStore\(\s*ctx\s*,\s*schema\s*,/, 'DifferentStore(ctx, schema,');
     expect(adaptModelsBundle(changed)).toBe(changed);
     expect(adaptModelsBundle(source + source)).toBe(source + source);
     expect(adaptModelsBundle('unrelated')).toBe('unrelated');
@@ -53,8 +55,11 @@ describe('model-scoped remote editor', () => {
     finish({ ok: false, error: { message: 'stale' } }); await old;
     expect(face.getSnapshot().view?.writable).toBe(true);
   });
-  test('native store consumes the adapted face and preserves native revisioned operations', async () => {
-    const start = source.indexOf('var ModelsSettingsStore = class {');
+  // The formatted 0.1.6 layout exposes a sliceable class body; the 0.2.x
+  // minified bundle is verified end to end by the runtime boot test instead.
+  const storeStart = source.indexOf('var ModelsSettingsStore = class {');
+  test.runIf(storeStart >= 0)('native store consumes the adapted face and preserves native revisioned operations', async () => {
+    const start = storeStart;
     const end = source.indexOf('\n\t\t};', start) + 6;
     const Store = runInNewContext(source.slice(start, end) + '\nModelsSettingsStore', {
       Map, Set, Promise, Error,

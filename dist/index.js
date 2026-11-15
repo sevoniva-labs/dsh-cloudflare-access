@@ -382,9 +382,22 @@ import { createServer, request } from "node:http";
 import { createHash as createHash2, createHmac, randomBytes } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify, customFetch } from "jose";
 
+// src/bundle.ts
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function moduleSection(source, id) {
+  const matches = [...source.matchAll(new RegExp(`id:\\s*(["'\`])${escapeRegExp(id)}\\1`, "g"))];
+  if (matches.length !== 1) return void 0;
+  const start = matches[0].index;
+  const next = source.indexOf("window.__ModuleLoader__.load(", start);
+  const end = next < 0 ? source.length : next;
+  return { start, end, section: source.slice(start, end) };
+}
+
 // src/models-compat.ts
 var MODELS_MODULE = "@deepseek-ai/dsh-client-ui-settings-models";
-var anchor = "new ModelsSettingsStore(ctx, schema, ctx.settingsScope.describe())";
+var MODELS_ANCHOR = /new ModelsSettingsStore\(\s*ctx\s*,\s*schema\s*,\s*ctx\.(?:settingsScope|configForms)\.describe\(\)\s*\)/;
 function modelDescribeFace(ctx) {
   let snapshot = { status: "idle", error: null };
   let generation = 0;
@@ -431,15 +444,12 @@ function modelsBundleRequest(url) {
   }
 }
 function adaptModelsBundle(source) {
-  const marker = `id: "${MODELS_MODULE}"`;
-  const start = source.indexOf(marker);
-  if (start < 0 || source.indexOf(marker, start + marker.length) >= 0) return source;
-  const next = source.indexOf("window.__ModuleLoader__.load(", start);
-  const end = next < 0 ? source.length : next;
-  const section = source.slice(start, end);
-  if (section.split(anchor).length !== 2 || !section.includes("function createModelsOperations(ctx)")) return source;
+  const found = moduleSection(source, MODELS_MODULE);
+  if (!found) return source;
+  const { start, end, section } = found;
+  if ((section.match(new RegExp(MODELS_ANCHOR.source, "g")) ?? []).length !== 1 || !section.includes("createModelsOperations(")) return source;
   const replacement = `new ModelsSettingsStore(ctx, schema, (${modelDescribeFace.toString()})(ctx))`;
-  return source.slice(0, start) + section.replace(anchor, replacement) + source.slice(end);
+  return source.slice(0, start) + section.replace(new RegExp(MODELS_ANCHOR.source), replacement) + source.slice(end);
 }
 
 // src/web-assets.ts
@@ -450,7 +460,7 @@ function versionedAsset(url, contentType) {
   return /^\/plugins\/\?\?.+\/client\.js(?:&rev=[a-f0-9]{12,32})$/.test(url) && !url.includes("client.js.map");
 }
 var SETTINGS_MODULE = "@deepseek-ai/dsh-client-ui-settings-general";
-var indicator = 'state: wide && desktopUpdate.presentation?.phase !== "installing" ? connectionIndicator : void 0,';
+var SETTINGS_ANCHOR = /state:\s*wide\s*&&\s*desktopUpdate\.presentation\?\.phase\s*!==\s*(["'`])installing\1\s*\?\s*connectionIndicator\s*:\s*void 0,/;
 function settingsBundleRequest(url) {
   try {
     const path = decodeURIComponent(url);
@@ -460,13 +470,12 @@ function settingsBundleRequest(url) {
   }
 }
 function adaptSettingsBundle(source) {
-  const marker = `id: "${SETTINGS_MODULE}"`, start = source.indexOf(marker);
-  if (start < 0 || source.indexOf(marker, start + marker.length) >= 0) return source;
-  const next = source.indexOf("window.__ModuleLoader__.load(", start), end = next < 0 ? source.length : next;
-  const section = source.slice(start, end);
-  if (section.split(indicator).length !== 2 || !section.includes("function SettingsRoot(props)")) return source;
-  const replacement = 'state: globalThis.__DSH_CLOUDFLARE_RECOVERY_OWNERS__?.size ? void 0 : (wide && desktopUpdate.presentation?.phase !== "installing" ? connectionIndicator : void 0),';
-  return source.slice(0, start) + section.replace(indicator, replacement) + source.slice(end);
+  const found = moduleSection(source, SETTINGS_MODULE);
+  if (!found) return source;
+  const { start, end, section } = found;
+  if ((section.match(new RegExp(SETTINGS_ANCHOR.source, "g")) ?? []).length !== 1 || !section.includes("function SettingsRoot(")) return source;
+  const replacement = (_match, quote) => `state: globalThis.__DSH_CLOUDFLARE_RECOVERY_OWNERS__?.size ? void 0 : (wide && desktopUpdate.presentation?.phase !== ${quote}installing${quote} ? connectionIndicator : void 0),`;
+  return source.slice(0, start) + section.replace(new RegExp(SETTINGS_ANCHOR.source), replacement) + source.slice(end);
 }
 function matchesEtag(header, etag) {
   return header?.split(",").some((value) => {
@@ -1209,7 +1218,9 @@ async function body(req) {
 async function apply(ctx, config) {
   if (!/^[a-z0-9-]{1,40}$/.test(config.instance)) fail("INSTANCE", "instance \u4EC5\u652F\u6301\u5C0F\u5199\u5B57\u6BCD\u3001\u6570\u5B57\u548C\u8FDE\u5B57\u7B26\u3002");
   if (ctx.webServer.host !== "127.0.0.1") fail("BIND", "Harness \u5FC5\u987B\u4EC5\u76D1\u542C 127.0.0.1\uFF0C\u8BF7\u4F7F\u7528 --host 127.0.0.1 \u542F\u52A8\u3002");
-  if (config.gatewayPort === ctx.webServer.port) fail("PORT", "\u7F51\u5173\u7AEF\u53E3\u4E0D\u80FD\u4E0E Harness \u7AEF\u53E3\u76F8\u540C\u3002");
+  const hostPort = ctx.webServer.port;
+  if (hostPort === void 0) fail("BIND", "Harness \u7684 web \u670D\u52A1\u5C1A\u672A\u76D1\u542C\u7AEF\u53E3\uFF0C\u65E0\u6CD5\u786E\u5B9A\u672C\u673A\u5730\u5740\u3002");
+  if (config.gatewayPort === hostPort) fail("PORT", "\u7F51\u5173\u7AEF\u53E3\u4E0D\u80FD\u4E0E Harness \u7AEF\u53E3\u76F8\u540C\u3002");
   const directory = config.dataDir ?? join3(process.env.DSH_HOME ?? join3(homedir2(), ".dsh"), "dsh-cloudflare-access", config.instance);
   if (!isAbsolute(directory) || config.cloudflaredPath && !isAbsolute(config.cloudflaredPath)) fail("PATH", "\u8BF7\u4F7F\u7528\u7EDD\u5BF9\u8DEF\u5F84\u3002");
   await mkdir2(directory, { recursive: true, mode: 448 });
@@ -1228,7 +1239,7 @@ async function apply(ctx, config) {
     set: (value) => ctx.credentials.set(ref, value),
     get: async () => (await ctx.credentials.resolve(ref))?.value,
     clear: () => ctx.credentials.unset(ref)
-  }, new NativeSession(ctx.webServer.port, (base) => ctx.connection.authenticatedUrl(base)), config.gatewayPort, config.cloudflaredPath, config.maxTokenAgeSeconds);
+  }, new NativeSession(hostPort, (base) => ctx.connection.authenticatedUrl(base)), config.gatewayPort, config.cloudflaredPath, config.maxTokenAgeSeconds);
   const activeController = controller;
   ctx.effect(() => () => activeController.dispose(), "cloudflare lifecycle");
   await controller.init();
@@ -1237,7 +1248,7 @@ async function apply(ctx, config) {
     fail("INSTANCE_LOCK", "\u672C\u673A\u5B9E\u4F8B\u9501\u5931\u6548\uFF0C\u5165\u53E3\u5DF2\u505C\u6B62\u3002");
   }
   ctx.effect(() => ctx.webServer.register({ kind: "prefix", path: PREFIX, handler: async (req, res) => {
-    if (!localAdmin(req, ctx.webServer.port, !ctx.connection.requestRejection(req))) {
+    if (!localAdmin(req, hostPort, !ctx.connection.requestRejection(req))) {
       json(res, 403, { error: "\u8BF7\u901A\u8FC7 Harness \u4E3B\u673A\u4E0A\u7684\u672C\u673A\u542F\u52A8\u94FE\u63A5\u8BBF\u95EE Cloudflare \u914D\u7F6E\u3002" });
       return;
     }

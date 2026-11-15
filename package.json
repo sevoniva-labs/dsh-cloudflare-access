@@ -40,7 +40,8 @@
     "SECURITY.md"
   ],
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=22.19.0",
+    "dsh": "0.1.6-alpha.2 || >=0.2.2-rc.1 <0.3.0-0"
   },
   "license": "MIT",
   "repository": {
@@ -71,32 +72,34 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@deepseek-ai/dsh-client-ui-directory-picker-browse": "0.1.6-alpha.2",
-    "@deepseek-ai/dsh-host-directory-picker-browse": "0.1.6-alpha.2",
+    "@deepseek-ai/dsh-client-ui-directory-picker-browse": "0.1.6-alpha.2 || >=0.2.2-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-host-directory-picker-browse": "0.1.6-alpha.2 || >=0.2.2-rc.1 <0.3.0-0",
     "jose": "6.2.2",
     "proper-lockfile": "4.1.2"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-client-connection": "0.1.6-alpha.2",
-    "@deepseek-ai/dsh-credentials": "0.1.6-alpha.2",
-    "@deepseek-ai/dsh-host-webserver": "0.1.6-alpha.2",
+    "@deepseek-ai/dsh-client-connection": "0.1.6-alpha.2 || >=0.2.2-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-credentials": "0.1.6-alpha.2 || >=0.2.2-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-host-webserver": "0.1.6-alpha.2 || >=0.2.2-rc.1 <0.3.0-0",
     "@deepseek-ai/schemastery": "^3.18.1"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.2",
-    "@deepseek-ai/dsh-client-connection": "0.1.6-alpha.2",
-    "@deepseek-ai/dsh-client-ui-settings-general": "0.1.6-alpha.2",
-    "@deepseek-ai/dsh-client-ui-settings-models": "0.1.6-alpha.2",
-    "@deepseek-ai/dsh-credentials": "0.1.6-alpha.2",
-    "@deepseek-ai/dsh-host-frontend-static": "0.1.6-alpha.2",
-    "@deepseek-ai/dsh-host-webserver": "0.1.6-alpha.2",
-    "@deepseek-ai/schemastery": "3.18.2",
+    "@deepseek-ai/cordis": "4.1.0",
+    "@deepseek-ai/dsh-client-connection": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-client-ui-settings-general": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-client-ui-settings-models": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-credentials": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-host-frontend-static": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-host-webserver": "0.2.2-rc.3",
+    "@deepseek-ai/schemastery": "3.19.0",
     "@types/node": "^22.20.1",
     "@types/proper-lockfile": "^4.1.4",
     "@types/react": "^18.3.0",
+    "@types/semver": "^7.8.0",
     "@types/ws": "^8.18.0",
     "esbuild": "^0.28.2",
+    "semver": "^7.8.6",
     "typescript": "^5.9.3",
     "vitest": "4.1.11",
     "ws": "^8.18.3"

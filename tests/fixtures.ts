@@ -22,5 +22,8 @@ export async function nativeHarness() {
     sub.effect(() => sub.connection.rpc.intercept('/api', endpoint => endpoint === 'llm/listProviders', async () => ({ ok: true, value: [{ id: 'fixture-provider' }] })));
     sub.effect(() => sub.connection.fetch.register({ path: '/api/echo', methods: ['POST'], requestBody: 'buffered', fetch: async request => Response.json({ body: await request.json(), host: request.headers.get('host'), origin: request.headers.get('origin'), cookie: !!request.headers.get('cookie'), cf: request.headers.get('cf-access-jwt-assertion') }) }));
   } }); fibers.push(fixtures); await fixtures.await();
-  return { ctx, fibers, port: ctx.get('webServer')!.port, connection: ctx.get('connection')!, close: async () => { for (const fiber of fibers.reverse()) await fiber.dispose(); } };
+  // 0.2.x types the bound port as optional; the fixture listens before returning.
+  const port = ctx.get('webServer')!.port;
+  if (port === undefined) throw new Error('fixture web server reported no port');
+  return { ctx, fibers, port, connection: ctx.get('connection')!, close: async () => { for (const fiber of fibers.reverse()) await fiber.dispose(); } };
 }

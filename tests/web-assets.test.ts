@@ -19,10 +19,11 @@ test('only versioned code/style URLs with the matching response MIME are browser
 test('adaptation only affects the official connection indicator while this plugin owns recovery UI', () => {
   const adapted = adaptSettingsBundle(source);
   expect(adapted).not.toBe(source); expect(() => new Script(adapted)).not.toThrow();
-  expect(adapted).toContain('connection.reconnect();');
-  expect(adapted).toContain('connectionState: connection.state');
+  expect(adapted).toMatch(/connection\.reconnect\(\)/);
+  expect(adapted).toMatch(/connectionState:\s*connection\.state/);
   expect(readFileSync(require.resolve(`${SETTINGS_MODULE}/client`), 'utf8')).toBe(source);
-  const expression = adapted.match(/state: (globalThis\.__DSH_CLOUDFLARE_RECOVERY_OWNERS__.+),/)![1]!;
+  // The rewritten expression is ours, not the bundle's, so it can be matched exactly.
+  const expression = adapted.match(/state: (globalThis\.__DSH_CLOUDFLARE_RECOVERY_OWNERS__\?\.size \? void 0 : \(wide && desktopUpdate\.presentation\?\.phase !== (?:"|\`)installing(?:"|\`) \? connectionIndicator : void 0\))/)![1]!;
   const values = { wide: true, desktopUpdate: {}, connectionIndicator: 'disconnected' };
   expect(runInNewContext(expression, values)).toBe('disconnected');
   expect(runInNewContext(expression, { ...values, __DSH_CLOUDFLARE_RECOVERY_OWNERS__: new Set([{}]) })).toBeUndefined();

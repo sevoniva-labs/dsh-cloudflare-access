@@ -119,8 +119,8 @@ describe('real official connection + protected loopback gateway', () => {
       const response = await http(path, { headers: { 'accept-encoding': 'gzip', 'if-none-match': 'original' } });
       expect(response.status).toBe(200); expect(response.headers.etag).toBeUndefined();
       expect(response.headers['cache-control']).toBe('no-store');
-      expect(response.text).not.toContain('new ModelsSettingsStore(ctx, schema, ctx.settingsScope.describe())');
-      expect(response.text).toContain('ctx.settingsScope.bind(');
+      expect(response.text).not.toMatch(/new ModelsSettingsStore\([^)]*ctx\.(?:settingsScope|configForms)\.describe\(\)/);
+      expect(response.text).toMatch(/new ModelsSettingsStore\(\s*ctx\s*,\s*schema\s*,\s*\(function modelDescribeFace/);
       expect(() => new Script(response.text)).not.toThrow();
       expect(requests).toBe(1);
     } finally { dispose(); }

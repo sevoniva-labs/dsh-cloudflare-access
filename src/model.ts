@@ -1,5 +1,6 @@
 export const PREFIX = '/__dsh_cloudflare_access';
-export const SUPPORTED_DSH = '0.1.6-alpha.2';
+/** Harness runtimes this build is validated against; keep in step with package.json engines.dsh. */
+export const SUPPORTED_DSH = '0.1.6-alpha.2 || >=0.2.2-rc.1 <0.3.0-0';
 export interface Setup {
   accountId: string; zoneId: string; hostname: string; emails: string[];
   identityProvider: string; postureChecks: string[];
