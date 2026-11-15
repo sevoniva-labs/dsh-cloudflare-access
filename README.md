@@ -33,12 +33,12 @@ For owners and trusted administrators only. Authorized users share the same Harn
 - 使用尚未配置 DNS 或 Access 应用的子域名，例如 `harness.example.com`。
 - Harness 主机能够连接 Cloudflare，远程使用期间保持运行。
 
-当前版本为 `0.1.0-alpha.12`（预发布）。macOS 已完成部署验证；Linux arm64/x64 支持自动安装，尚未完成部署验证。Windows 暂不支持自动安装。DSH 版本支持范围写在包的 `engines.dsh` 中：`0.1.6-alpha.2` 与 `>=0.2.2-rc.1 <0.3.0` 已完成启动验证，其他版本会被 DSH 的版本闸门拦下，需在 `dsh plugin allow-version` 显式豁免后自行承担风险。
+当前版本为 `0.1.0-alpha.13`（预发布）。macOS 已完成部署验证；Linux arm64/x64 支持自动安装，尚未完成部署验证。Windows 暂不支持自动安装。DSH 版本支持范围写在包的 `engines.dsh` 中：`0.1.6-alpha.2` 与 `>=0.2.2-rc.1 <0.3.0` 已完成启动验证，其他版本会被 DSH 的版本闸门拦下，需在 `dsh plugin allow-version` 显式豁免后自行承担风险。
 
 ## 安装与配置
 
 ```sh
-dsh plugin --profile web add github:sevoniva-labs/dsh-cloudflare-access#v0.1.0-alpha.12
+dsh plugin --profile web add github:sevoniva-labs/dsh-cloudflare-access#v0.1.0-alpha.13
 dsh --profile web --host 127.0.0.1
 ```
 
